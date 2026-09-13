@@ -1,0 +1,12 @@
+# AI Border Surveillance CCTV Command Center (SIH 26187)
+# Core Backend Dependencies
+
+fastapi>=0.111.0
+uvicorn>=0.24.0
+websockets>=16.0
+opencv-python>=4.9.0
+numpy>=1.26.0
+requests>=2.31.0
+python-multipart>=0.0.9
+aiofiles>=23.2.1
+pydantic>=2.7.0

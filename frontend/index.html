@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Border Surveillance CCTV Command Center | SIH 26187</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+  <!-- Authentic CRT Scanline & Screen Vignette Overlay -->
+  <div class="crt-overlay"></div>
+
+  <!-- Command Center Header -->
+  <header class="cctv-header">
+    <div class="header-left">
+      <div class="logo-badge">
+        <span class="blink-dot"></span>
+        <span>SIH 26187</span>
+      </div>
+      <div class="title-group">
+        <h1>AI Border Surveillance CCTV Command Center</h1>
+        <p>SECTOR 04 - NORTH PERIMETER & TACTICAL VISION GRID</p>
+      </div>
+    </div>
+
+    <div class="header-center">
+      <div class="telemetry-pill">
+        <span class="label">PERIMETER LINK</span>
+        <span class="val" id="ws-status-indicator">CONNECTING...</span>
+      </div>
+      <div class="telemetry-pill">
+        <span class="label">OPTICAL SENSOR</span>
+        <span class="val">ACTIVE (720P)</span>
+      </div>
+      <div class="telemetry-pill">
+        <span class="label">LATENCY</span>
+        <span class="val" id="latency-val">-- ms</span>
+      </div>
+      <div class="telemetry-pill">
+        <span class="label">TARGET FPS</span>
+        <span class="val" id="fps-val">-- FPS</span>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <div class="clock-panel">
+        <div class="time" id="live-time">00:00:00:00</div>
+        <div class="date" id="live-date">2026-09-14 [UTC+05:30]</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Command Dashboard -->
+  <main class="dashboard-container">
+    
+    <!-- Primary CCTV Surveillance Viewport -->
+    <section class="viewport-card">
+      
+      <!-- Top HUD Telemetry Bar -->
+      <div class="viewport-hud-top">
+        <div class="cam-meta">
+          <div class="rec-badge">
+            <span class="rec-dot"></span>
+            <span>LIVE REC</span>
+          </div>
+          <span class="cam-title">CAM-01 [HQ LAPTOP OPTICAL SENSOR]</span>
+        </div>
+        <div class="hud-telemetry-strip">
+          <span>AZ: <strong>042° NNE</strong></span>
+          <span>EL: <strong>+14.2°</strong></span>
+          <span>GRID: <strong>32°11'44"N 74°52'19"E</strong></span>
+        </div>
+      </div>
+
+      <!-- Video Stage with Overlay Canvas -->
+      <div class="video-stage" id="video-stage">
+        <!-- Live Camera Stream -->
+        <video id="webcam-video" autoplay playsinline muted></video>
+        <!-- Real-time Tactical HUD Canvas -->
+        <canvas id="hud-canvas"></canvas>
+        <!-- Center Targeting Reticle -->
+        <div class="hud-crosshair"></div>
+      </div>
+
+      <!-- Bottom HUD Status Bar -->
+      <div class="viewport-hud-bottom">
+        <div class="hud-telemetry-strip">
+          <span>STATUS: <strong style="color: var(--accent-green);">SYSTEM ARMED</strong></span>
+          <span>ACTIVE TARGETS: <strong id="face-count-val">0</strong></span>
+          <span>HIGH THREATS: <strong id="threat-count-val" style="color: var(--accent-red);">0</strong></span>
+        </div>
+        <div class="hud-telemetry-strip">
+          <span>CRYPTO: <strong>AES-256-GCM</strong></span>
+          <span>NODE: <strong>COMMAND-UNIT-A1</strong></span>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Tactical Sidebar Control & Intelligence Panel -->
+    <aside class="sidebar-panel">
+
+      <!-- Card 1: Camera Hardware & Engine -->
+      <div class="tactical-card">
+        <div class="card-title">
+          <span>Camera Ingestion & Hardware</span>
+          <span class="badge">DEV_CTRL</span>
+        </div>
+        <div class="control-group">
+          <label class="control-label" for="camera-select">
+            <span>Video Device Ingestion</span>
+          </label>
+          <select id="camera-select" class="tactical-select">
+            <option value="">Scanning hardware devices...</option>
+          </select>
+        </div>
+        <div class="control-group">
+          <label class="control-label" for="engine-select">
+            <span>Face Detection Engine</span>
+          </label>
+          <select id="engine-select" class="tactical-select">
+            <option value="yunet" selected>YuNet Deep Neural Net (ONNX + Landmarks)</option>
+            <option value="haar">OpenCV Haar Cascade (Ultra-light CPU)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Card 2: AI Vision Analytics Controls -->
+      <div class="tactical-card">
+        <div class="card-title">
+          <span>AI Vision Analytics</span>
+          <span class="badge">LIVE_AI</span>
+        </div>
+        <div class="toggle-row">
+          <span style="font-weight: 600; color: #fff;">Face & Emotion Analytics</span>
+          <label class="switch">
+            <input type="checkbox" id="analytics-toggle" checked>
+            <span class="slider-toggle"></span>
+          </label>
+        </div>
+        <div class="control-group" style="margin-top: 14px;">
+          <label class="control-label" for="confidence-slider">
+            <span>Confidence Threshold</span>
+            <span class="val-indicator" id="slider-val-indicator">50%</span>
+          </label>
+          <input 
+            type="range" 
+            id="confidence-slider" 
+            class="tactical-slider" 
+            min="50" 
+            max="90" 
+            step="1" 
+            value="50"
+          >
+        </div>
+      </div>
+
+      <!-- Card 3: Threat & Security Meter -->
+      <div class="tactical-card">
+        <div class="card-title">
+          <span>Threat Level Status</span>
+          <span id="threat-status-badge" style="font-weight: 700; color: var(--accent-green);">NOMINAL</span>
+        </div>
+        <div class="threat-meter">
+          <div class="threat-block active-green"></div>
+          <div class="threat-block"></div>
+          <div class="threat-block"></div>
+          <div class="threat-block"></div>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-box">
+            <div class="stat-num" id="stat-normal-faces">0</div>
+            <div class="stat-lbl">Tracked Targets</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-num" id="stat-alert-events" style="color: var(--accent-red);">0</div>
+            <div class="stat-lbl">Threat Events</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-num">8</div>
+            <div class="stat-lbl">AI Classes</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Card 4: CCTV Visual Sensor Modes & Operations -->
+      <div class="tactical-card">
+        <div class="card-title">
+          <span>Optical Filters & Controls</span>
+          <span class="badge">SENSOR</span>
+        </div>
+        <div class="filter-btn-group">
+          <button class="tactical-btn filter-btn active" data-filter="normal">Standard Color</button>
+          <button class="tactical-btn filter-btn" data-filter="night-vision">Night Vision</button>
+          <button class="tactical-btn filter-btn" data-filter="thermal">Thermal FLIR</button>
+          <button class="tactical-btn filter-btn" data-filter="monochrome">Monochrome</button>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px;">
+          <button class="tactical-btn" id="mute-toggle-btn">🔊 AUDIO ON</button>
+          <button class="tactical-btn" id="snapshot-btn">📸 SNAPSHOT</button>
+        </div>
+      </div>
+
+      <!-- Card 5: Real-time Alert & Anomaly Feed -->
+      <div class="tactical-card alert-feed-container">
+        <div class="card-title">
+          <span>Surveillance Alert Feed</span>
+          <div style="display: flex; gap: 6px;">
+            <button class="tactical-btn" id="export-log-btn" style="padding: 2px 6px; font-size: 9px;">EXPORT</button>
+            <button class="tactical-btn" id="clear-alerts-btn" style="padding: 2px 6px; font-size: 9px;">CLEAR</button>
+          </div>
+        </div>
+        <div class="alert-feed-list" id="alert-feed-list">
+          <div class="alert-item">
+            <div class="alert-time">[SYS_INIT]</div>
+            <div class="alert-msg">Surveillance pipeline initialized. Waiting for optical camera feed...</div>
+          </div>
+        </div>
+      </div>
+
+    </aside>
+
+  </main>
+
+  <!-- Application Scripts -->
+  <script src="/static/js/audio.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
