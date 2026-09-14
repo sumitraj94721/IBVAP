@@ -44,6 +44,10 @@
         <span class="label">TARGET FPS</span>
         <span class="val" id="fps-val">-- FPS</span>
       </div>
+      <div class="telemetry-pill sync-pill">
+        <span class="label">PENDING SYNC</span>
+        <span class="val" id="pending-sync-val">0 EVENTS</span>
+      </div>
     </div>
 
     <div class="header-right">
@@ -127,6 +131,33 @@
             <option value="haar">OpenCV Haar Cascade (Ultra-light CPU)</option>
           </select>
         </div>
+      </div>
+
+      <div class="tactical-card phase3-card">
+        <div class="card-title">
+          <span>Communication Link</span>
+          <span class="badge">EDGE_SYNC</span>
+        </div>
+        <div class="toggle-row">
+          <span id="network-state-label" style="font-weight: 600; color: #fff;">ONLINE</span>
+          <label class="switch">
+            <input type="checkbox" id="network-toggle" checked>
+            <span class="slider-toggle"></span>
+          </label>
+        </div>
+        <div class="sync-state" id="sync-state">CENTRAL LINK ACTIVE</div>
+      </div>
+
+      <div class="tactical-card phase3-card">
+        <div class="card-title">
+          <span>ANPR & Face Detection</span>
+          <span class="badge">PHASE_3</span>
+        </div>
+        <div class="anpr-status" id="anpr-status">PLATE SENSOR STANDBY</div>
+        <div class="plate-list" id="plate-list">
+          <div class="plate-empty">No qualifying vehicle detections</div>
+        </div>
+        <div class="privacy-note">FACE DETECTION ONLY // NO BIOMETRIC STORAGE</div>
       </div>
 
       <!-- Card 2: AI Vision Analytics Controls -->

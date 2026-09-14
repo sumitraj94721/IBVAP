@@ -31,6 +31,12 @@ class SurveillanceCommandCenter {
     this.threatStatusBadge = document.getElementById("threat-status-badge");
     this.alertListEl = document.getElementById("alert-feed-list");
     this.threatMeterBlocks = document.querySelectorAll(".threat-block");
+    this.networkToggle = document.getElementById("network-toggle");
+    this.networkStateLabel = document.getElementById("network-state-label");
+    this.syncState = document.getElementById("sync-state");
+    this.pendingSyncVal = document.getElementById("pending-sync-val");
+    this.plateList = document.getElementById("plate-list");
+    this.anprStatus = document.getElementById("anpr-status");
 
     // State
     this.stream = null;
@@ -39,6 +45,8 @@ class SurveillanceCommandCenter {
     this.isWsConnected = false;
     this.isProcessingFrame = false;
     this.latestTargets = [];
+    this.latestFaces = [];
+    this.latestVehicles = [];
     this.activeAlerts = [];
     this.trackedIds = new Set();
     this.lastFrameTime = performance.now();
@@ -150,6 +158,18 @@ class SurveillanceCommandCenter {
         </div>
       `;
     });
+
+    if (this.networkToggle) {
+      this.networkToggle.addEventListener("change", async (event) => {
+        await fetch("/api/sync/network", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ online: event.target.checked })
+        });
+        this.updateSyncUI({ online: event.target.checked, pending_sync: this.pendingSyncVal ? parseInt(this.pendingSyncVal.textContent, 10) || 0 : 0 });
+        this.sendWsConfig();
+      });
+    }
   }
 
   async enumerateCameras() {
@@ -274,7 +294,8 @@ class SurveillanceCommandCenter {
           type: "config",
           analytics_enabled: this.config.analyticsEnabled,
           confidence_threshold: this.config.confidenceThreshold,
-          engine: this.config.engine
+          engine: this.config.engine,
+          network_online: this.networkToggle ? this.networkToggle.checked : true
         })
       );
     }
@@ -323,11 +344,15 @@ class SurveillanceCommandCenter {
 
   handleTelemetry(data) {
     this.latestTargets = data.targets || [];
+    this.latestFaces = data.faces || [];
+    this.latestVehicles = data.vehicles || [];
     const latency = data.latency_ms || 0;
     const totalFaces = data.total_faces || 0;
     const highThreats = data.high_threat_count || 0;
 
     this.updateHUDStats(totalFaces, highThreats, latency);
+    this.updateSyncUI(data.sync || {});
+    this.updateANPR(data.vehicles || []);
 
     // Process alerts
     if (data.alerts && data.alerts.length > 0) {
@@ -379,6 +404,26 @@ class SurveillanceCommandCenter {
       this.threatStatusBadge.textContent = statusText;
       this.threatStatusBadge.style.color = statusColor;
     }
+  }
+
+  updateSyncUI(sync) {
+    const online = sync.online !== false;
+    const pending = Number(sync.pending_sync || 0);
+    if (this.pendingSyncVal) this.pendingSyncVal.textContent = `${pending} EVENTS`;
+    if (this.networkToggle) this.networkToggle.checked = online;
+    if (this.networkStateLabel) this.networkStateLabel.textContent = online ? "ONLINE" : "OFFLINE";
+    if (this.syncState) this.syncState.textContent = online ? (pending ? "SYNCING BUFFER" : "CENTRAL LINK ACTIVE") : "BUFFERING LOCALLY";
+    if (this.networkStateLabel) this.networkStateLabel.style.color = online ? "var(--accent-green)" : "var(--accent-amber)";
+  }
+
+  updateANPR(vehicles) {
+    if (!this.plateList || !this.anprStatus) return;
+    this.anprStatus.textContent = vehicles.length ? `${vehicles.length} VEHICLE PLATE(S) LOCKED` : "PLATE SENSOR STANDBY";
+    this.plateList.innerHTML = vehicles.length ? vehicles.map((vehicle) => `
+      <div class="plate-entry">
+        <span class="plate-object">${vehicle.object_type} ${(vehicle.confidence || 0).toFixed(0)}%</span>
+        <strong>${vehicle.plate}</strong>
+      </div>`).join("") : '<div class="plate-empty">No qualifying vehicle detections</div>';
   }
 
   addAlertItem(source, message, isThreat = false) {
@@ -468,6 +513,43 @@ class SurveillanceCommandCenter {
         this.drawLandmarks(target.landmarks, cw, ch);
       }
     });
+
+    this.latestFaces.forEach((face) => {
+      const [x, y, w, h] = face.box;
+      this.drawFaceBadge(x, y, w, h, face.tag || "FACE DETECTED (CONF: 92%)");
+    });
+    this.latestVehicles.forEach((vehicle) => {
+      const [x, y, w, h] = vehicle.box;
+      this.drawVehicleBadge(x, y, w, h, vehicle.hud);
+    });
+  }
+
+  drawFaceBadge(x, y, w, h, label) {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.strokeStyle = "#00d2ff";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, w, h);
+    ctx.fillStyle = "rgba(4, 7, 10, 0.88)";
+    ctx.fillRect(x, Math.max(4, y - 22), Math.max(170, w), 20);
+    ctx.fillStyle = "#00d2ff";
+    ctx.font = "bold 10px 'JetBrains Mono', monospace";
+    ctx.fillText(label, x + 6, Math.max(18, y - 8));
+    ctx.restore();
+  }
+
+  drawVehicleBadge(x, y, w, h, label) {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.strokeStyle = "#ffaa00";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, w, h);
+    ctx.fillStyle = "rgba(4, 7, 10, 0.9)";
+    ctx.fillRect(x, y + h + 4, Math.max(230, w), 20);
+    ctx.fillStyle = "#ffaa00";
+    ctx.font = "bold 10px 'JetBrains Mono', monospace";
+    ctx.fillText(label, x + 6, y + h + 18);
+    ctx.restore();
   }
 
   drawTacticalBoundingBox(x, y, w, h, targetId, emotion, confidence, color, statusText) {

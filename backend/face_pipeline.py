@@ -11,6 +11,7 @@ import logging
 from typing import List, Dict, Any, Tuple, Optional
 from collections import OrderedDict
 from backend.emotion_pipeline import EmotionClassifier
+from backend.anpr_face import ANPRFaceProcessor
 
 logger = logging.getLogger("IBVAP.FacePipeline")
 
@@ -258,13 +259,15 @@ class SurveillanceVisionPipeline:
         self.detector = FaceDetector(engine=engine)
         self.tracker = FaceTracker()
         self.emotion_classifier = EmotionClassifier()
+        self.edge_processor = ANPRFaceProcessor()
         self.analytics_enabled = True
 
     def process_frame(
         self,
         frame_bgr: np.ndarray,
         confidence_threshold: float = 0.5,
-        engine: Optional[str] = None
+        engine: Optional[str] = None,
+        vehicle_detections: Optional[List[Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
         End-to-end frame analysis.
@@ -289,12 +292,22 @@ class SurveillanceVisionPipeline:
                 "frame_size": {"width": w, "height": h},
                 "alerts": [],
                 "total_faces": 0,
-                "high_threat_count": 0
+                "high_threat_count": 0,
+                "faces": [],
+                "vehicles": []
             }
 
         # 1. Face Detection
         raw_detections = self.detector.detect(frame_bgr)
         rects = [d["box"] for d in raw_detections]
+        edge_result = self.edge_processor.process(
+            frame_bgr,
+            vehicle_detections=vehicle_detections,
+            face_detections=[
+                {"box": d["box"], "confidence": d["confidence"], "tag": "FACE DETECTED"}
+                for d in raw_detections
+            ],
+        )
 
         # 2. Tracking: associate with persistent Target IDs
         rect_to_id = self.tracker.update(rects)
@@ -352,10 +365,16 @@ class SurveillanceVisionPipeline:
                 "emotion": emotion_res
             })
 
+        for face in edge_result["faces"]:
+            face["tag"] = f"FACE DETECTED (CONF: {face.get('confidence', 92):.0f}%)"
+        self.edge_processor.annotate(frame_bgr, edge_result)
+
         return {
             "targets": targets,
             "frame_size": {"width": w, "height": h},
             "alerts": alerts,
             "total_faces": len(targets),
-            "high_threat_count": high_threat_count
+            "high_threat_count": high_threat_count,
+            "faces": edge_result["faces"],
+            "vehicles": edge_result["vehicles"]
         }

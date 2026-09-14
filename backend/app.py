@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.face_pipeline import SurveillanceVisionPipeline
 from backend.camera_streamer import OpenCVCameraStreamer
+from backend.storage_sync import StorageSyncManager
 
 # Setup structured logging
 logging.basicConfig(
@@ -28,6 +29,12 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
 logger = logging.getLogger("IBVAP.Backend")
+
+# Directory paths
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+FRONTEND_DIR = os.path.join(PROJECT_ROOT, "frontend")
+SNAPSHOT_DIR = os.path.join(PROJECT_ROOT, "static", "snapshots")
+os.makedirs(SNAPSHOT_DIR, exist_ok=True)
 
 # Initialize FastAPI App
 app = FastAPI(
@@ -47,14 +54,13 @@ app.add_middleware(
 
 # Global Vision Pipeline
 pipeline = SurveillanceVisionPipeline(engine="yunet")
+storage = StorageSyncManager(project_root=PROJECT_ROOT)
 backend_camera: Optional[OpenCVCameraStreamer] = None
-
-# Directory paths
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FRONTEND_DIR = os.path.join(PROJECT_ROOT, "frontend")
+last_event_at: Dict[str, float] = {}
 
 # Mount static frontend directories
 if os.path.exists(FRONTEND_DIR):
+    app.mount("/static/snapshots", StaticFiles(directory=SNAPSHOT_DIR), name="snapshots")
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 
@@ -93,6 +99,25 @@ async def get_available_cameras():
     return {"cameras": cameras}
 
 
+@app.get("/api/events/pending")
+async def get_pending_events():
+    """Returns buffered edge events waiting for central synchronization."""
+    return {"events": storage.pending_events(), **storage.status()}
+
+
+@app.get("/api/sync/status")
+async def get_sync_status():
+    return storage.status()
+
+
+@app.post("/api/sync/network")
+async def set_network_state(payload: Dict[str, Any]):
+    """Toggle simulated communications without changing event history."""
+    if "online" not in payload:
+        return JSONResponse({"error": "online boolean is required"}, status_code=400)
+    return storage.set_network_state(bool(payload["online"]))
+
+
 @app.post("/api/analyze-frame")
 async def analyze_uploaded_frame(
     file: UploadFile = File(...),
@@ -113,6 +138,7 @@ async def analyze_uploaded_frame(
     result = pipeline.process_frame(frame, confidence_threshold=confidence, engine=engine)
     dt = (time.time() - t0) * 1000
     result["latency_ms"] = round(dt, 2)
+    result["sync"] = storage.status()
     return result
 
 
@@ -142,6 +168,8 @@ async def websocket_video_stream(websocket: WebSocket):
                     pipeline.detector.set_engine(data["engine"])
                 if "confidence_threshold" in data:
                     pipeline.detector.set_confidence_threshold(float(data["confidence_threshold"]))
+                if "network_online" in data:
+                    storage.set_network_state(bool(data["network_online"]))
                 await websocket.send_text(json.dumps({"type": "config_ack", "status": "updated"}))
                 continue
 
@@ -170,8 +198,18 @@ async def websocket_video_stream(websocket: WebSocket):
                 analysis = pipeline.process_frame(
                     frame,
                     confidence_threshold=confidence,
-                    engine=engine
+                    engine=engine,
+                    vehicle_detections=data.get("vehicle_detections", [])
                 )
+
+                now = time.time()
+                for alert in analysis["alerts"]:
+                    event_key = f"{alert['target_id']}:{alert['expression']}"
+                    if now - last_event_at.get(event_key, 0) > 5:
+                        storage.record_event("CAM-01", "INTRUSION", "PERSON", alert["level"], frame)
+                        last_event_at[event_key] = now
+                for vehicle in analysis["vehicles"]:
+                    storage.record_event("CAM-01", "ANPR", vehicle["object_type"], "MEDIUM", frame)
 
                 latency_ms = round((time.time() - t_recv) * 1000, 2)
 
@@ -184,6 +222,9 @@ async def websocket_video_stream(websocket: WebSocket):
                     "alerts": analysis["alerts"],
                     "total_faces": analysis["total_faces"],
                     "high_threat_count": analysis["high_threat_count"],
+                    "faces": analysis["faces"],
+                    "vehicles": analysis["vehicles"],
+                    "sync": storage.status(),
                     "analytics_enabled": pipeline.analytics_enabled
                 }
 
