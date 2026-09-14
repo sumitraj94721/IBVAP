@@ -1,0 +1,651 @@
+/* 
+  IBVAP - Intelligent Border Video Analytics Platform (SIH 26187)
+  Phase 1: Defense UI Theme & 2x2 CCTV Grid Stylesheet
+  Slate/Zinc Palette: #0f172a base, #00f0ff tactical cyan, #ef4444 alert red
+*/
+
+:root {
+  --bg-dark: #090d16;
+  --bg-base: #0f172a;
+  --bg-surface: #1e293b;
+  --bg-surface-elevated: #24344d;
+  --border-subtle: #334155;
+  --border-tactical: rgba(0, 240, 255, 0.35);
+  --border-bright: #00f0ff;
+  
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --text-dim: #64748b;
+
+  --cyan-glow: #00f0ff;
+  --cyan-dim: rgba(0, 240, 255, 0.12);
+  --alert-red: #ef4444;
+  --alert-red-dim: rgba(239, 68, 68, 0.15);
+  --status-green: #10b981;
+  --status-green-dim: rgba(16, 185, 129, 0.15);
+  --warning-amber: #f59e0b;
+
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --font-ui: 'Chakra Petch', system-ui, -apple-system, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  background-color: var(--bg-base);
+  color: var(--text-main);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.4;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+}
+
+/* Subtle CRT Scanline Overlay */
+.crt-overlay {
+  pointer-events: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 9999;
+  background: linear-gradient(
+    rgba(15, 23, 42, 0) 50%, 
+    rgba(0, 0, 0, 0.22) 50%
+  );
+  background-size: 100% 4px;
+  opacity: 0.6;
+}
+
+/* -------------------------------------------------------------
+   Header & Prominent Banner
+   ------------------------------------------------------------- */
+.soc-header {
+  background-color: var(--bg-dark);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 8px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  position: relative;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.banner-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.badge-sih {
+  background: var(--cyan-dim);
+  border: 1px solid var(--cyan-glow);
+  color: var(--cyan-glow);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 2px;
+  letter-spacing: 1px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.blink-dot {
+  width: 8px;
+  height: 8px;
+  background-color: var(--cyan-glow);
+  border-radius: 50%;
+  box-shadow: 0 0 8px var(--cyan-glow);
+  animation: pulse-cyan 1.4s infinite;
+}
+
+.banner-title-group h1 {
+  font-family: var(--font-ui);
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  color: #ffffff;
+  text-transform: uppercase;
+}
+
+.banner-title-group .sub {
+  font-size: 11px;
+  color: var(--cyan-glow);
+  letter-spacing: 1px;
+  font-weight: 500;
+}
+
+.banner-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.classification-tag {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid var(--alert-red);
+  color: var(--alert-red);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 2px;
+  letter-spacing: 1px;
+}
+
+.clock-telemetry {
+  text-align: right;
+  font-family: var(--font-mono);
+}
+
+.clock-telemetry .time-val {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.clock-telemetry .date-val {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+/* -------------------------------------------------------------
+   Top KPI Ribbon
+   ------------------------------------------------------------- */
+.kpi-ribbon {
+  background-color: #0b1120;
+  border-bottom: 1px solid var(--border-subtle);
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  padding: 6px 20px;
+  gap: 12px;
+}
+
+.kpi-card {
+  background: rgba(30, 41, 59, 0.4);
+  border: 1px solid rgba(51, 65, 85, 0.6);
+  padding: 6px 12px;
+  border-radius: 3px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.kpi-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 3px;
+  height: 100%;
+  background: var(--cyan-glow);
+}
+
+.kpi-card.status-card::before {
+  background: var(--status-green);
+}
+
+.kpi-card.alert-card::before {
+  background: var(--alert-red);
+}
+
+.kpi-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  letter-spacing: 0.8px;
+}
+
+.kpi-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-main);
+  letter-spacing: 0.5px;
+}
+
+.kpi-card.status-card .kpi-value {
+  color: var(--status-green);
+}
+
+.kpi-card.alert-card .kpi-value {
+  color: var(--alert-red);
+}
+
+/* -------------------------------------------------------------
+   Main 2x2 CCTV Grid Container
+   ------------------------------------------------------------- */
+.soc-workspace {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 16px;
+  gap: 12px;
+}
+
+.cctv-grid-2x2 {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 12px;
+  min-height: 520px;
+}
+
+/* Individual CCTV Feed Panel */
+.cctv-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  transition: all 0.25s ease;
+}
+
+.cctv-panel:hover {
+  border-color: var(--border-tactical);
+}
+
+.cctv-panel.maximized {
+  position: fixed;
+  top: 60px;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 1000;
+}
+
+/* Top Panel HUD */
+.panel-hud-header {
+  background: rgba(11, 17, 32, 0.92);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 6px 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  z-index: 15;
+}
+
+.panel-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cam-badge {
+  background: var(--cyan-dim);
+  border: 1px solid var(--border-tactical);
+  color: var(--cyan-glow);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 2px;
+}
+
+.cam-name {
+  font-size: 11px;
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: 0.5px;
+}
+
+.panel-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Dynamic Camera Switcher (CAM-01) */
+.camera-select-dropdown {
+  background: #0f172a;
+  border: 1px solid var(--border-tactical);
+  color: var(--cyan-glow);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.rec-indicator {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--alert-red);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.rec-dot {
+  width: 7px;
+  height: 7px;
+  background-color: var(--alert-red);
+  border-radius: 50%;
+  animation: pulse-red 1s infinite ease-in-out;
+}
+
+.btn-panel-action {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 2px;
+  font-size: 11px;
+  transition: all 0.15s;
+}
+
+.btn-panel-action:hover {
+  background: var(--cyan-dim);
+  color: var(--cyan-glow);
+  border-color: var(--border-tactical);
+}
+
+/* Viewport Stage (Video / Canvas) */
+.panel-viewport {
+  flex: 1;
+  position: relative;
+  background: #040711;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.panel-viewport video,
+.panel-viewport img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Mirror CAM-01 for intuitive user webcam interaction */
+#cam1-video {
+  transform: scaleX(-1);
+}
+
+/* Overlaid Canvas on CAM-01 for bounding boxes & polygon zones */
+#cam1-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 10;
+  pointer-events: none;
+}
+
+/* Tactical Reticle Crosshairs */
+.tactical-crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 44px;
+  height: 44px;
+  pointer-events: none;
+  z-index: 5;
+  opacity: 0.45;
+}
+
+.tactical-crosshair::before,
+.tactical-crosshair::after {
+  content: '';
+  position: absolute;
+  background: var(--cyan-glow);
+}
+
+.tactical-crosshair::before {
+  top: 50%;
+  left: -8px;
+  width: 60px;
+  height: 1px;
+}
+
+.tactical-crosshair::after {
+  top: -8px;
+  left: 50%;
+  width: 1px;
+  height: 60px;
+}
+
+/* Corner HUD Brackets */
+.corner-bracket {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-color: var(--cyan-glow);
+  pointer-events: none;
+  z-index: 6;
+  opacity: 0.6;
+}
+
+.corner-top-left {
+  top: 8px;
+  left: 8px;
+  border-top: 2px solid;
+  border-left: 2px solid;
+}
+
+.corner-top-right {
+  top: 8px;
+  right: 8px;
+  border-top: 2px solid;
+  border-right: 2px solid;
+}
+
+.corner-bottom-left {
+  bottom: 8px;
+  left: 8px;
+  border-bottom: 2px solid;
+  border-left: 2px solid;
+}
+
+.corner-bottom-right {
+  bottom: 8px;
+  right: 8px;
+  border-bottom: 2px solid;
+  border-right: 2px solid;
+}
+
+/* Bottom Panel HUD */
+.panel-hud-footer {
+  background: rgba(11, 17, 32, 0.92);
+  border-top: 1px solid var(--border-subtle);
+  padding: 5px 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  z-index: 15;
+}
+
+.footer-meta-left {
+  display: flex;
+  gap: 12px;
+  color: var(--text-muted);
+}
+
+.footer-meta-left span strong {
+  color: var(--text-main);
+}
+
+.footer-meta-right {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.fps-tag {
+  color: var(--cyan-glow);
+  font-weight: 700;
+}
+
+.status-tag {
+  color: var(--status-green);
+  font-weight: 600;
+}
+
+/* -------------------------------------------------------------
+   Bottom Operational Alerts & Activity Tray
+   ------------------------------------------------------------- */
+.soc-activity-tray {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 8px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 130px;
+}
+
+.tray-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.5);
+  padding-bottom: 4px;
+}
+
+.tray-title {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--cyan-glow);
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tray-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-tray {
+  background: var(--cyan-dim);
+  border: 1px solid var(--border-tactical);
+  color: var(--cyan-glow);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-tray:hover {
+  background: var(--cyan-glow);
+  color: #000;
+}
+
+.btn-tray.btn-drill {
+  background: var(--alert-red-dim);
+  border-color: var(--alert-red);
+  color: var(--alert-red);
+}
+
+.btn-tray.btn-drill:hover {
+  background: var(--alert-red);
+  color: #fff;
+}
+
+.alert-feed-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+  font-size: 11px;
+  padding-right: 4px;
+}
+
+.alert-feed-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.alert-feed-scroll::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 2px;
+}
+
+.log-entry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 4px;
+  border-radius: 2px;
+}
+
+.log-entry .log-time {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.log-entry .log-source {
+  font-weight: 700;
+  color: var(--cyan-glow);
+  font-size: 10px;
+}
+
+.log-entry .log-msg {
+  color: var(--text-muted);
+}
+
+.log-entry.level-ALERT {
+  background: var(--alert-red-dim);
+  border-left: 2px solid var(--alert-red);
+}
+
+.log-entry.level-ALERT .log-source,
+.log-entry.level-ALERT .log-msg {
+  color: #ffffff;
+  font-weight: 600;
+}
+
+/* -------------------------------------------------------------
+   Keyframe Animations
+   ------------------------------------------------------------- */
+@keyframes pulse-cyan {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.3; transform: scale(1.15); }
+}
+
+@keyframes pulse-red {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+
+/* Responsive Grid */
+@media (max-width: 960px) {
+  .cctv-grid-2x2 {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+  }
+  .kpi-ribbon {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}

@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IBVAP — Intelligent Border Video Analytics Platform | SIH 26187</title>
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- Defense UI Stylesheet -->
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+  <!-- Authentic CRT Scanline Overlay -->
+  <div class="crt-overlay"></div>
+
+  <!-- Top Banner -->
+  <header class="soc-header">
+    <div class="banner-left">
+      <div class="badge-sih">
+        <span class="blink-dot"></span>
+        <span>SIH 26187</span>
+      </div>
+      <div class="banner-title-group">
+        <h1>IBVAP — INTELLIGENT BORDER VIDEO ANALYTICS PLATFORM [DEMO MODE ACTIVE]</h1>
+        <div class="sub">PHASE 1: FOUNDATIONAL COMMAND CENTER DASHBOARD & VIDEO STREAMING GRID</div>
+      </div>
+    </div>
+
+    <div class="banner-right">
+      <div class="classification-tag">DEMO DRILL // LOCAL SECURE</div>
+      <div class="clock-telemetry">
+        <div class="time-val" id="clock-time">00:00:00.000</div>
+        <div class="date-val" id="clock-date">2026-09-14 [IST]</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Top KPI Ribbon -->
+  <section class="kpi-ribbon">
+    <div class="kpi-card">
+      <span class="kpi-label">TOTAL CAMERAS</span>
+      <span class="kpi-value" id="kpi-cameras">{{ kpi.total_cameras }}</span>
+    </div>
+
+    <div class="kpi-card alert-card">
+      <span class="kpi-label">ACTIVE ALERTS</span>
+      <span class="kpi-value" id="kpi-alerts">{{ kpi.active_alerts }}</span>
+    </div>
+
+    <div class="kpi-card alert-card">
+      <span class="kpi-label">INTRUSIONS</span>
+      <span class="kpi-value" id="kpi-intrusions">{{ kpi.intrusions }}</span>
+    </div>
+
+    <div class="kpi-card">
+      <span class="kpi-label">PERSONS DETECTED</span>
+      <span class="kpi-value" id="kpi-persons">{{ kpi.persons_detected }}</span>
+    </div>
+
+    <div class="kpi-card">
+      <span class="kpi-label">VEHICLES LOGGED</span>
+      <span class="kpi-value" id="kpi-vehicles">{{ kpi.vehicles_logged }}</span>
+    </div>
+
+    <div class="kpi-card status-card">
+      <span class="kpi-label">SYSTEM STATUS</span>
+      <span class="kpi-value" id="kpi-status">{{ kpi.system_status }}</span>
+    </div>
+  </section>
+
+  <!-- Main SOC Workspace: 2x2 CCTV Grid -->
+  <main class="soc-workspace">
+    <div class="cctv-grid-2x2">
+
+      <!-- ========================================================
+           PANEL 1: CAM-01 [LOCAL SECTOR] (Interactive Webcam)
+           ======================================================== -->
+      <div class="cctv-panel" id="panel-cam1">
+        <!-- Top Panel HUD -->
+        <div class="panel-hud-header">
+          <div class="panel-header-left">
+            <span class="cam-badge">CAM-01</span>
+            <span class="cam-name">LOCAL SECTOR [OPTICAL INGEST]</span>
+          </div>
+          <div class="panel-header-right">
+            <!-- Dynamic Camera Device Selector -->
+            <select id="cam1-device-select" class="camera-select-dropdown" title="Switch Optical Hardware Input">
+              <option value="">Default Optical Sensor</option>
+            </select>
+            <div class="rec-indicator">
+              <span class="rec-dot"></span>
+              <span>REC</span>
+            </div>
+            <button class="btn-panel-action btn-maximize" data-panel="panel-cam1" title="Maximize Panel">⛶</button>
+          </div>
+        </div>
+
+        <!-- Viewport Stage -->
+        <div class="panel-viewport">
+          <!-- WebRTC Local Webcam Video -->
+          <video id="cam1-video" autoplay playsinline muted></video>
+          <!-- Overlaid Canvas Scaffolding for BBoxes & Polygon Zones -->
+          <canvas id="cam1-overlay"></canvas>
+          <!-- Tactical HUD Crosshair & Corners -->
+          <div class="tactical-crosshair"></div>
+          <div class="corner-bracket corner-top-left"></div>
+          <div class="corner-bracket corner-top-right"></div>
+          <div class="corner-bracket corner-bottom-left"></div>
+          <div class="corner-bracket corner-bottom-right"></div>
+        </div>
+
+        <!-- Bottom Panel HUD -->
+        <div class="panel-hud-footer">
+          <div class="footer-meta-left">
+            <span>RES: <strong>1280x720</strong></span>
+            <span>CODEC: <strong>RAW/H.264</strong></span>
+            <span>TIME: <strong class="panel-live-ts">--:--:--.--</strong></span>
+          </div>
+          <div class="footer-meta-right">
+            <span class="fps-tag" id="cam1-fps">30 FPS</span>
+            <span class="status-tag">HARDWARE LOCKED</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========================================================
+           PANEL 2: CAM-02 [BOP-01 PERIMETER] (Simulated MJPEG)
+           ======================================================== -->
+      <div class="cctv-panel" id="panel-cam2">
+        <div class="panel-hud-header">
+          <div class="panel-header-left">
+            <span class="cam-badge">CAM-02</span>
+            <span class="cam-name">BOP-01 PERIMETER [SECTOR ALPHA]</span>
+          </div>
+          <div class="panel-header-right">
+            <div class="rec-indicator">
+              <span class="rec-dot"></span>
+              <span>REC</span>
+            </div>
+            <button class="btn-panel-action btn-maximize" data-panel="panel-cam2" title="Maximize Panel">⛶</button>
+          </div>
+        </div>
+
+        <div class="panel-viewport">
+          <img src="/video_feed/cam2" alt="CAM-02 Live Feed" loading="eager">
+          <div class="tactical-crosshair"></div>
+          <div class="corner-bracket corner-top-left"></div>
+          <div class="corner-bracket corner-top-right"></div>
+          <div class="corner-bracket corner-bottom-left"></div>
+          <div class="corner-bracket corner-bottom-right"></div>
+        </div>
+
+        <div class="panel-hud-footer">
+          <div class="footer-meta-left">
+            <span>RES: <strong>720P-NVD</strong></span>
+            <span>SENSOR: <strong>GEN-III PHOSPHOR</strong></span>
+            <span>TIME: <strong class="panel-live-ts">--:--:--.--</strong></span>
+          </div>
+          <div class="footer-meta-right">
+            <span class="fps-tag">25 FPS</span>
+            <span class="status-tag">STREAM ACTIVE</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========================================================
+           PANEL 3: CAM-03 [RESTRICTED BUFFER] (Simulated MJPEG)
+           ======================================================== -->
+      <div class="cctv-panel" id="panel-cam3">
+        <div class="panel-hud-header">
+          <div class="panel-header-left">
+            <span class="cam-badge">CAM-03</span>
+            <span class="cam-name">RESTRICTED BUFFER [RIVERINE ZONE]</span>
+          </div>
+          <div class="panel-header-right">
+            <div class="rec-indicator">
+              <span class="rec-dot"></span>
+              <span>REC</span>
+            </div>
+            <button class="btn-panel-action btn-maximize" data-panel="panel-cam3" title="Maximize Panel">⛶</button>
+          </div>
+        </div>
+
+        <div class="panel-viewport">
+          <img src="/video_feed/cam3" alt="CAM-03 Live Feed" loading="eager">
+          <div class="tactical-crosshair"></div>
+          <div class="corner-bracket corner-top-left"></div>
+          <div class="corner-bracket corner-top-right"></div>
+          <div class="corner-bracket corner-bottom-left"></div>
+          <div class="corner-bracket corner-bottom-right"></div>
+        </div>
+
+        <div class="panel-hud-footer">
+          <div class="footer-meta-left">
+            <span>RES: <strong>640x360</strong></span>
+            <span>SENSOR: <strong>FLIR THERMAL IR</strong></span>
+            <span>TIME: <strong class="panel-live-ts">--:--:--.--</strong></span>
+          </div>
+          <div class="footer-meta-right">
+            <span class="fps-tag">25 FPS</span>
+            <span class="status-tag">STREAM ACTIVE</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========================================================
+           PANEL 4: CAM-04 [CHECKPOST-ALPHA] (Simulated MJPEG)
+           ======================================================== -->
+      <div class="cctv-panel" id="panel-cam4">
+        <div class="panel-hud-header">
+          <div class="panel-header-left">
+            <span class="cam-badge">CAM-04</span>
+            <span class="cam-name">CHECKPOST-ALPHA [BARRIER GATE]</span>
+          </div>
+          <div class="panel-header-right">
+            <div class="rec-indicator">
+              <span class="rec-dot"></span>
+              <span>REC</span>
+            </div>
+            <button class="btn-panel-action btn-maximize" data-panel="panel-cam4" title="Maximize Panel">⛶</button>
+          </div>
+        </div>
+
+        <div class="panel-viewport">
+          <img src="/video_feed/cam4" alt="CAM-04 Live Feed" loading="eager">
+          <div class="tactical-crosshair"></div>
+          <div class="corner-bracket corner-top-left"></div>
+          <div class="corner-bracket corner-top-right"></div>
+          <div class="corner-bracket corner-bottom-left"></div>
+          <div class="corner-bracket corner-bottom-right"></div>
+        </div>
+
+        <div class="panel-hud-footer">
+          <div class="footer-meta-left">
+            <span>RES: <strong>720P-HD</strong></span>
+            <span>SENSOR: <strong>ANPR / LASER SCAN</strong></span>
+            <span>TIME: <strong class="panel-live-ts">--:--:--.--</strong></span>
+          </div>
+          <div class="footer-meta-right">
+            <span class="fps-tag">25 FPS</span>
+            <span class="status-tag">STREAM ACTIVE</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Bottom SOC Activity & Operational Alert Tray -->
+    <footer class="soc-activity-tray">
+      <div class="tray-header">
+        <div class="tray-title">
+          <span>OPERATIONAL AUDIT & ALERTS FEED</span>
+          <span style="font-size: 10px; color: var(--text-dim);">[WS /ws/alerts: <strong id="link-status-badge" style="color: var(--cyan-glow);">INITIALIZING...</strong>]</span>
+        </div>
+        <div class="tray-actions">
+          <button class="btn-tray btn-drill" id="btn-trigger-drill">⚠️ TRIGGER INTRUSION DRILL</button>
+          <button class="btn-tray" id="btn-clear-logs">CLEAR FEED</button>
+        </div>
+      </div>
+      <div class="alert-feed-scroll" id="alert-feed-scroll">
+        <div class="log-entry">
+          <span class="log-time">[SYSTEM]</span>
+          <span class="log-source">[SOC-INIT]</span>
+          <span class="log-msg">IBVAP Phase 1 Command Center active. Synchronizing 4 CCTV surveillance channels.</span>
+        </div>
+      </div>
+    </footer>
+  </main>
+
+  <!-- Dashboard JavaScript Engine -->
+  <script src="/static/js/dashboard.js"></script>
+</body>
+</html>
