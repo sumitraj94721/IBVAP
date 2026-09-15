@@ -1,7 +1,7 @@
 /* 
   IBVAP - Intelligent Border Video Analytics Platform (SIH 26187)
-  Phase 1: Defense UI Theme & 2x2 CCTV Grid Stylesheet
-  Slate/Zinc Palette: #0f172a base, #00f0ff tactical cyan, #ef4444 alert red
+  Defense UI Theme: 2x2 CCTV Grid, Glassmorphic Login, Officer HUD & Audit Drawer
+  Slate/Zinc Palette: #0f172a base, #00f0ff tactical cyan, #fbbf24 commander gold, #ef4444 alert red
 */
 
 :root {
@@ -24,6 +24,8 @@
   --status-green: #10b981;
   --status-green-dim: rgba(16, 185, 129, 0.15);
   --warning-amber: #f59e0b;
+  --gold-commander: #fbbf24;
+  --gold-dim: rgba(251, 191, 36, 0.15);
 
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
   --font-ui: 'Chakra Petch', system-ui, -apple-system, sans-serif;
@@ -127,7 +129,42 @@ body {
 .banner-right {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
+}
+
+.header-officer-pill {
+  background: rgba(0, 240, 255, 0.08);
+  border: 1px solid var(--border-tactical);
+  color: var(--cyan-glow);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.header-officer-pill.level-4-pill {
+  background: var(--gold-dim);
+  border-color: var(--gold-commander);
+  color: var(--gold-commander);
+}
+
+.officer-indicator-dot {
+  width: 7px;
+  height: 7px;
+  background-color: var(--status-green);
+  border-radius: 50%;
+  box-shadow: 0 0 6px var(--status-green);
+}
+
+.header-clearance-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.4);
 }
 
 .classification-tag {
@@ -223,14 +260,27 @@ body {
 }
 
 /* -------------------------------------------------------------
-   Main 2x2 CCTV Grid Container
+   Main Workspace: CCTV Grid + Tactical Sidebar
    ------------------------------------------------------------- */
 .soc-workspace {
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 12px 16px;
+  padding: 10px 16px;
+  gap: 10px;
+}
+
+.workspace-layout {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 310px;
   gap: 12px;
+  min-height: 540px;
+}
+
+.cctv-grid-container {
+  display: flex;
+  flex-direction: column;
 }
 
 .cctv-grid-2x2 {
@@ -238,8 +288,7 @@ body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   grid-template-rows: 1fr 1fr;
-  gap: 12px;
-  min-height: 520px;
+  gap: 10px;
 }
 
 /* Individual CCTV Feed Panel */
@@ -305,10 +354,9 @@ body {
 .panel-header-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
-/* Dynamic Camera Switcher (CAM-01) */
 .camera-select-dropdown {
   background: #0f172a;
   border: 1px solid var(--border-tactical);
@@ -379,12 +427,10 @@ body {
   display: block;
 }
 
-/* Mirror CAM-01 for intuitive user webcam interaction */
 #cam1-video {
   transform: scaleX(-1);
 }
 
-/* Overlaid Canvas on CAM-01 for bounding boxes & polygon zones */
 #cam1-overlay {
   position: absolute;
   top: 0;
@@ -393,6 +439,27 @@ body {
   height: 100%;
   z-index: 10;
   pointer-events: none;
+}
+
+/* Virtual Gate 02 Lockdown Banner on CAM-04 */
+.gate-lockdown-banner {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  right: 14px;
+  background: rgba(239, 68, 68, 0.92);
+  border: 2px solid #ffffff;
+  color: #ffffff;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  padding: 6px 12px;
+  text-align: center;
+  border-radius: 2px;
+  box-shadow: 0 0 16px rgba(239, 68, 68, 0.8);
+  animation: pulse-red 1s infinite;
+  z-index: 20;
 }
 
 /* Tactical Reticle Crosshairs */
@@ -440,33 +507,10 @@ body {
   opacity: 0.6;
 }
 
-.corner-top-left {
-  top: 8px;
-  left: 8px;
-  border-top: 2px solid;
-  border-left: 2px solid;
-}
-
-.corner-top-right {
-  top: 8px;
-  right: 8px;
-  border-top: 2px solid;
-  border-right: 2px solid;
-}
-
-.corner-bottom-left {
-  bottom: 8px;
-  left: 8px;
-  border-bottom: 2px solid;
-  border-left: 2px solid;
-}
-
-.corner-bottom-right {
-  bottom: 8px;
-  right: 8px;
-  border-bottom: 2px solid;
-  border-right: 2px solid;
-}
+.corner-top-left { top: 8px; left: 8px; border-top: 2px solid; border-left: 2px solid; }
+.corner-top-right { top: 8px; right: 8px; border-top: 2px solid; border-right: 2px solid; }
+.corner-bottom-left { bottom: 8px; left: 8px; border-bottom: 2px solid; border-left: 2px solid; }
+.corner-bottom-right { bottom: 8px; right: 8px; border-bottom: 2px solid; border-right: 2px solid; }
 
 /* Bottom Panel HUD */
 .panel-hud-footer {
@@ -507,7 +551,360 @@ body {
 }
 
 /* -------------------------------------------------------------
-   Bottom Operational Alerts & Activity Tray
+   Right Sidebar: Tactical Personnel & Escalations
+   ------------------------------------------------------------- */
+.soc-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.sidebar-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+}
+
+.sidebar-card .card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.5);
+  padding-bottom: 6px;
+}
+
+.card-title {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--cyan-glow);
+  text-transform: uppercase;
+  flex: 1;
+}
+
+.duty-beacon {
+  width: 8px;
+  height: 8px;
+  background-color: var(--status-green);
+  border-radius: 50%;
+  box-shadow: 0 0 8px var(--status-green);
+  animation: pulse-green 1.5s infinite;
+}
+
+/* Officer Profile HUD Card (Requirement 5) */
+.officer-hud-card {
+  transition: border-color 0.25s ease;
+}
+
+/* Level 4 Commander: Gold Theme */
+.officer-hud-card.theme-level-4 {
+  border-color: rgba(251, 191, 36, 0.5);
+  box-shadow: inset 0 0 16px rgba(251, 191, 36, 0.08);
+}
+
+.officer-hud-card.theme-level-4 .card-title {
+  color: var(--gold-commander);
+}
+
+.officer-hud-card.theme-level-4 .officer-avatar-box {
+  border-left: 3px solid var(--gold-commander);
+}
+
+.officer-hud-card.theme-level-4 .clearance-tag {
+  color: var(--gold-commander);
+  font-weight: 800;
+}
+
+/* Level 2 Operator: Cyan Theme */
+.officer-hud-card.theme-level-2 {
+  border-color: rgba(0, 240, 255, 0.4);
+}
+
+.officer-hud-card.theme-level-2 .card-title {
+  color: var(--cyan-glow);
+}
+
+.officer-hud-card.theme-level-2 .officer-avatar-box {
+  border-left: 3px solid var(--cyan-glow);
+}
+
+.officer-hud-card.theme-level-2 .clearance-tag {
+  color: var(--cyan-glow);
+  font-weight: 800;
+}
+
+.officer-profile-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.officer-avatar-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(15, 23, 42, 0.6);
+  padding: 6px 10px;
+  border-radius: 3px;
+}
+
+.avatar-silhouette {
+  font-size: 22px;
+}
+
+.officer-meta .officer-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.officer-meta .officer-role {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.officer-details-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.detail-item {
+  background: rgba(11, 17, 32, 0.6);
+  padding: 5px 8px;
+  border-radius: 2px;
+  display: flex;
+  flex-direction: column;
+}
+
+.detail-item.full-width-item {
+  grid-column: span 2;
+}
+
+.detail-lbl {
+  font-size: 8.5px;
+  color: var(--text-dim);
+  font-weight: 700;
+}
+
+.detail-val {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.highlight-id {
+  color: var(--text-main);
+  font-weight: 700;
+}
+
+.session-timer-box {
+  border: 1px dashed rgba(51, 65, 85, 0.8);
+  background: rgba(11, 17, 32, 0.85);
+}
+
+.timer-val {
+  color: var(--status-green);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 1px;
+}
+
+.officer-action-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.btn-sidebar {
+  border: 1px solid var(--border-subtle);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 6px;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.btn-sidebar.btn-audit {
+  background: var(--gold-dim);
+  border-color: var(--gold-commander);
+  color: var(--gold-commander);
+}
+
+.btn-sidebar.btn-audit:hover {
+  background: var(--gold-commander);
+  color: #000;
+}
+
+.btn-sidebar.btn-fence {
+  background: var(--cyan-dim);
+  border-color: var(--border-tactical);
+  color: var(--cyan-glow);
+}
+
+.btn-sidebar.btn-fence:hover {
+  background: var(--cyan-glow);
+  color: #000;
+}
+
+.btn-sidebar.btn-logout {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: var(--alert-red);
+}
+
+.btn-sidebar.btn-logout:hover {
+  background: var(--alert-red);
+  color: #fff;
+}
+
+/* Countermeasures Card */
+.countermeasures-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.countermeasure-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(11, 17, 32, 0.5);
+  padding: 5px 8px;
+  border-radius: 2px;
+}
+
+.cm-name {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.status-pill {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 2px;
+  letter-spacing: 0.5px;
+}
+
+.status-secure {
+  background: var(--status-green-dim);
+  border: 1px solid var(--status-green);
+  color: var(--status-green);
+}
+
+.status-alert {
+  background: var(--alert-red-dim);
+  border: 1px solid var(--alert-red);
+  color: var(--alert-red);
+}
+
+.status-standby {
+  background: rgba(100, 116, 139, 0.2);
+  border: 1px solid #64748b;
+  color: #94a3b8;
+}
+
+.btn-mini-action {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--cyan-glow);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.btn-mini-action:hover {
+  background: var(--cyan-glow);
+  color: #000;
+}
+
+/* Incidents List */
+.incidents-card {
+  flex: 1;
+  min-height: 140px;
+}
+
+.incidents-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  max-height: 180px;
+}
+
+.incident-item {
+  background: rgba(15, 23, 42, 0.6);
+  border-left: 3px solid var(--alert-red);
+  padding: 6px 8px;
+  border-radius: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.inc-header-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+}
+
+.inc-id {
+  font-weight: 700;
+  color: var(--alert-red);
+}
+
+.inc-time {
+  color: var(--text-dim);
+}
+
+.inc-desc {
+  font-size: 10px;
+  color: var(--text-main);
+}
+
+.inc-sig-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: var(--cyan-glow);
+  margin-top: 2px;
+}
+
+.incident-item-empty {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 20px 0;
+}
+
+.btn-refresh-log {
+  background: transparent;
+  border: none;
+  color: var(--cyan-glow);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+/* -------------------------------------------------------------
+   Bottom Activity & Operational Alert Tray
    ------------------------------------------------------------- */
 .soc-activity-tray {
   background: var(--bg-surface);
@@ -596,7 +993,7 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 2px 4px;
+  padding: 3px 6px;
   border-radius: 2px;
 }
 
@@ -613,6 +1010,7 @@ body {
 
 .log-entry .log-msg {
   color: var(--text-muted);
+  flex: 1;
 }
 
 .log-entry.level-ALERT {
@@ -626,20 +1024,647 @@ body {
   font-weight: 600;
 }
 
+.log-entry-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.btn-ack-trigger {
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid var(--status-green);
+  color: var(--status-green);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 2px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-ack-trigger:hover {
+  background: var(--status-green);
+  color: #000;
+}
+
+.btn-escalate-trigger {
+  background: var(--alert-red);
+  border: 1px solid #ffffff;
+  color: #ffffff;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 2px;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);
+  animation: pulse-red 1.2s infinite;
+  white-space: nowrap;
+}
+
+.btn-escalate-trigger:hover {
+  background: #ff1a1a;
+  transform: scale(1.04);
+}
+
 /* -------------------------------------------------------------
-   Keyframe Animations
+   Defense Glassmorphic Login Overlay (Requirement 4)
    ------------------------------------------------------------- */
+.tactical-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(6, 10, 18, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.tactical-login-card {
+  background: rgba(17, 24, 39, 0.95);
+  border: 1px solid var(--border-tactical);
+  border-radius: 6px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.85), 0 0 30px rgba(0, 240, 255, 0.2);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  max-width: 500px;
+  width: 100%;
+  animation: modalPop 0.2s ease-out;
+}
+
+.login-card-header {
+  background: #0b1120;
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 16px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.login-card-header h2 {
+  font-family: var(--font-ui);
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: #ffffff;
+}
+
+.login-card-header p {
+  font-size: 10.5px;
+  color: var(--cyan-glow);
+  letter-spacing: 1px;
+}
+
+.defense-terminal-tag {
+  font-size: 9px;
+  color: var(--text-dim);
+  letter-spacing: 0.8px;
+  font-weight: 700;
+}
+
+.login-error-banner {
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid var(--alert-red);
+  color: #fca5a5;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 8px 16px;
+  margin: 12px 20px 0;
+  border-radius: 3px;
+}
+
+.login-form {
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.input-group,
+.form-group-tactical {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.input-group label,
+.form-group-tactical label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-dim);
+  letter-spacing: 0.8px;
+}
+
+.tactical-text-input,
+.tactical-select-box {
+  background: #0a0f1d;
+  border: 1px solid var(--border-subtle);
+  color: #ffffff;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 9px 12px;
+  border-radius: 3px;
+  outline: none;
+  transition: all 0.2s;
+}
+
+.tactical-text-input:focus,
+.tactical-select-box:focus {
+  border-color: var(--cyan-glow);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.25);
+}
+
+.remember-terminal-row {
+  display: flex;
+  align-items: center;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Quick-Fill Demo Profiles */
+.quick-demo-section {
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px dashed var(--border-subtle);
+  border-radius: 3px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.quick-demo-label {
+  font-size: 9px;
+  color: var(--text-dim);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.quick-demo-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.btn-quick-fill {
+  background: rgba(30, 41, 59, 0.8);
+  border: 1px solid rgba(51, 65, 85, 0.8);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 7px 10px;
+  border-radius: 2px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s;
+}
+
+.btn-quick-cdr {
+  border-color: rgba(251, 191, 36, 0.4);
+  color: var(--gold-commander);
+}
+
+.btn-quick-cdr:hover {
+  background: var(--gold-dim);
+  border-color: var(--gold-commander);
+}
+
+.btn-quick-op {
+  border-color: rgba(0, 240, 255, 0.4);
+  color: var(--cyan-glow);
+}
+
+.btn-quick-op:hover {
+  background: var(--cyan-dim);
+  border-color: var(--cyan-glow);
+}
+
+.btn-login-submit {
+  background: var(--cyan-glow);
+  border: none;
+  color: #000;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  padding: 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-transform: uppercase;
+}
+
+.btn-login-submit:hover {
+  background: #38bdf8;
+  box-shadow: 0 0 14px rgba(0, 240, 255, 0.5);
+}
+
+.login-footer-disclaimer {
+  background: #090d16;
+  border-top: 1px solid rgba(51, 65, 85, 0.4);
+  padding: 8px 20px;
+  font-size: 9px;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+/* -------------------------------------------------------------
+   Tactical Modals: Escalation & Virtual Fence
+   ------------------------------------------------------------- */
+.tactical-modal-card {
+  background: #111827;
+  border: 1px solid var(--border-tactical);
+  border-radius: 6px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.85);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  max-width: 520px;
+  width: 100%;
+  animation: modalPop 0.2s ease-out;
+}
+
+.modal-card-header {
+  background: #0b1120;
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: relative;
+}
+
+.modal-card-header.alert-header {
+  border-bottom-color: var(--alert-red);
+  background: rgba(30, 12, 16, 0.95);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.modal-card-header h3 {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  color: #ffffff;
+}
+
+.modal-card-header p {
+  font-size: 10px;
+  color: var(--cyan-glow);
+  letter-spacing: 1px;
+}
+
+.modal-card-body {
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.threat-synopsis-box {
+  background: rgba(15, 23, 42, 0.8);
+  border-left: 3px solid var(--alert-red);
+  padding: 8px 12px;
+  border-radius: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.synopsis-row {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.synopsis-row span {
+  color: var(--text-dim);
+  font-size: 10px;
+  width: 130px;
+}
+
+.highlight-red {
+  color: var(--alert-red);
+}
+
+.highlight-cyan {
+  color: var(--cyan-glow);
+}
+
+.defensive-checkboxes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(15, 23, 42, 0.5);
+  padding: 10px;
+  border-radius: 3px;
+}
+
+.custom-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-main);
+  user-select: none;
+}
+
+.custom-checkbox input {
+  display: none;
+}
+
+.checkmark {
+  width: 16px;
+  height: 16px;
+  background: #0b1120;
+  border: 1px solid var(--border-tactical);
+  border-radius: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.custom-checkbox input:checked + .checkmark {
+  background: var(--cyan-glow);
+}
+
+.custom-checkbox input:checked + .checkmark::after {
+  content: '✓';
+  color: #000;
+  font-weight: 800;
+  font-size: 11px;
+}
+
+.modal-actions-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.btn-cancel-modal {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 8px 16px;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.btn-confirm-escalate {
+  background: var(--alert-red);
+  border: 1px solid #ffffff;
+  color: #ffffff;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  padding: 8px 18px;
+  border-radius: 2px;
+  cursor: pointer;
+  box-shadow: 0 0 14px rgba(239, 68, 68, 0.5);
+  transition: all 0.2s;
+}
+
+.btn-confirm-escalate:hover {
+  background: #ff1a1a;
+  transform: scale(1.02);
+}
+
+.btn-modal-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.btn-modal-close:hover {
+  color: #ffffff;
+}
+
+/* -------------------------------------------------------------
+   Officer Audit Log Sliding Drawer (Requirement 9: Level 4 Only)
+   ------------------------------------------------------------- */
+.audit-drawer-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(6, 10, 18, 0.7);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 9990;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.audit-drawer {
+  width: 860px;
+  max-width: 92vw;
+  height: 100vh;
+  background: #0e1526;
+  border-left: 2px solid var(--gold-commander);
+  box-shadow: -10px 0 40px rgba(0, 0, 0, 0.9);
+  display: flex;
+  flex-direction: column;
+  animation: slideDrawer 0.25s ease-out;
+}
+
+.audit-drawer-header {
+  background: #080d1a;
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 16px 22px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.audit-header-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.audit-crest {
+  font-size: 26px;
+}
+
+.audit-header-title h3 {
+  font-family: var(--font-ui);
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  color: var(--gold-commander);
+}
+
+.audit-header-title p {
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.8px;
+}
+
+.btn-close-drawer {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  width: 28px;
+  height: 28px;
+  border-radius: 2px;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-close-drawer:hover {
+  color: #fff;
+  border-color: var(--gold-commander);
+}
+
+.audit-drawer-controls {
+  padding: 10px 22px;
+  background: rgba(15, 23, 42, 0.6);
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  gap: 10px;
+}
+
+.audit-search-input {
+  flex: 1;
+  padding: 7px 12px;
+  font-size: 11px;
+}
+
+.btn-refresh-audit {
+  background: var(--gold-dim);
+  border: 1px solid var(--gold-commander);
+  color: var(--gold-commander);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 6px 14px;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.btn-refresh-audit:hover {
+  background: var(--gold-commander);
+  color: #000;
+}
+
+.audit-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 22px;
+}
+
+.audit-table-wrapper {
+  overflow-x: auto;
+}
+
+.audit-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.audit-table th {
+  background: #080d1a;
+  color: var(--text-dim);
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 9px;
+  letter-spacing: 0.8px;
+  position: sticky;
+  top: 0;
+}
+
+.audit-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.3);
+  color: var(--text-main);
+  vertical-align: middle;
+}
+
+.audit-table tr:hover {
+  background: rgba(251, 191, 36, 0.04);
+}
+
+.action-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.action-LOGIN { background: var(--cyan-dim); color: var(--cyan-glow); border: 1px solid var(--border-tactical); }
+.action-LOGOUT { background: rgba(100, 116, 139, 0.2); color: #94a3b8; }
+.action-SWITCH_CAMERA { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid #3b82f6; }
+.action-ALTER_VIRTUAL_FENCE { background: var(--gold-dim); color: var(--gold-commander); border: 1px solid var(--gold-commander); }
+.action-ACKNOWLEDGE_ALERT { background: var(--status-green-dim); color: var(--status-green); border: 1px solid var(--status-green); }
+.action-DISPATCH_QRT { background: var(--alert-red-dim); color: var(--alert-red); border: 1px solid var(--alert-red); font-weight: 800; }
+
+.audit-drawer-footer {
+  background: #080d1a;
+  border-top: 1px solid var(--border-subtle);
+  padding: 10px 22px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+/* Keyframes */
 @keyframes pulse-cyan {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.3; transform: scale(1.15); }
 }
 
-@keyframes pulse-red {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.2; }
+@keyframes pulse-green {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(1.2); }
 }
 
-/* Responsive Grid */
+@keyframes pulse-red {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+@keyframes modalPop {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slideDrawer {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+/* Responsive */
+@media (max-width: 1100px) {
+  .workspace-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 960px) {
   .cctv-grid-2x2 {
     grid-template-columns: 1fr;
@@ -648,4 +1673,52 @@ body {
   .kpi-ribbon {
     grid-template-columns: repeat(3, 1fr);
   }
+}
+
+/* ==========================================================================
+   SHOURYA (IBVAP) TACTICAL DEFENSE THEME & LOGIN ADDITIONS
+   Base colors: Deep navy/midnight blue (#0a1128, #001f3f)
+   Accents: Electric blue / cyan (#0077b6, #00b4d8)
+   ========================================================================== */
+.shourya-nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.shourya-title-tag {
+  font-family: var(--font-ui);
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  color: #ffffff;
+}
+
+.shourya-subtitle-tag {
+  font-size: 10px;
+  color: #00b4d8;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+}
+
+.nav-logout-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  color: #ef4444;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 3px;
+  text-decoration: none;
+  transition: all 0.2s ease;
+}
+
+.nav-logout-link:hover {
+  background: #ef4444;
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.6);
 }

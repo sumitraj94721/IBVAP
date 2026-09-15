@@ -8,15 +8,18 @@ import os
 import time
 import json
 import asyncio
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request, Response
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from jinja2 import Environment, FileSystemLoader
 
 from backend.stream_generators import stream_manager
+from backend.auth_router import auth_router, get_current_officer
+from backend.auth_service import SESSION_COOKIE_NAME, create_session_token, authenticate_credentials
+from backend.audit_service import audit_event
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
@@ -44,6 +47,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include RBAC Authentication & Tactical Incident Router
+app.include_router(auth_router)
+
 # Mount static files
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -62,11 +68,159 @@ kpi_state = {
 
 
 @app.get("/", response_class=HTMLResponse)
-async def index_dashboard():
-    """Renders the main SOC Command Center dashboard."""
+async def root_entry(
+    request: Request,
+    officer: Optional[Dict[str, Any]] = Depends(get_current_officer)
+):
+    """
+    Entry point for IBVAP.
+    If authenticated -> renders main SOC Command Center dashboard.
+    If not logged in -> redirects to /login.
+    """
+    if not officer:
+        return RedirectResponse(url="/login", status_code=303)
+
     template = jinja_env.get_template("index.html")
     return template.render(
         kpi=kpi_state,
+        officer=officer,
+        title="IBVAP — Command Center Dashboard"
+    )
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(
+    request: Request,
+    officer: Optional[Dict[str, Any]] = Depends(get_current_officer)
+):
+    """Dedicated login route."""
+    if officer:
+        return RedirectResponse(url="/", status_code=303)
+    template = jinja_env.get_template("login.html")
+    return template.render(title="IBVAP — Command Terminal Login")
+
+
+@app.post("/login")
+@app.post("/api/login")
+async def api_login(request: Request, response: Response):
+    """
+    Accepts form or JSON admin credentials for the SIH prototype login.
+    Demo credentials: admin / admin123.
+    """
+    user_id = ""
+    password = ""
+    remember = True
+
+    content_type = request.headers.get("content-type", "")
+    is_json = "application/json" in content_type
+
+    if is_json:
+        try:
+            body = await request.json()
+            user_id = str(body.get("user_id") or body.get("username") or "").strip()
+            password = str(body.get("password") or body.get("access_key") or "")
+        except Exception:
+            pass
+    else:
+        try:
+            form = await request.form()
+            user_id = str(form.get("user_id") or form.get("username") or "").strip()
+            password = str(form.get("password") or form.get("access_key") or "")
+        except Exception:
+            pass
+
+    officer = authenticate_credentials(user_id, password)
+
+    if not officer:
+        audit_event(
+            user_id=user_id or "UNKNOWN",
+            action="LOGIN_FAILED",
+            target="SHOURYA_COMMAND_HUB",
+            details="Rejected: Invalid credentials",
+            request=request
+        )
+        if is_json:
+            raise HTTPException(status_code=401, detail="Invalid admin credentials")
+        template = jinja_env.get_template("login.html")
+        return HTMLResponse(
+            template.render(title="IBVAP Admin Login", error="Invalid admin credentials"),
+            status_code=401
+        )
+        if is_json:
+            raise HTTPException(
+                status_code=401,
+                detail="AUTHENTICATION FAILED — INVALID CREDENTIALS"
+            )
+        template = jinja_env.get_template("login.html")
+        return HTMLResponse(template.render(title="SHOURYA — Login"), status_code=401)
+
+    token = create_session_token(officer, remember=remember)
+    max_age = 604800 if remember else 86400
+
+    audit_event(
+        user_id=officer["user_id"],
+        action="LOGIN",
+        target="SHOURYA_COMMAND_HUB",
+        details=f"Authenticated as {officer['full_name']} ({officer['rank']})",
+        request=request
+    )
+
+    if is_json:
+        res = JSONResponse({
+            "success": True,
+            "redirect": "/",
+            "status": "AUTHENTICATED",
+            "officer": officer,
+            "token": token
+        })
+    else:
+        res = RedirectResponse(url="/", status_code=303)
+
+    res.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        max_age=max_age,
+        samesite="lax",
+        secure=False
+    )
+    return res
+
+
+@app.api_route("/api/logout", methods=["GET", "POST"])
+@app.get("/logout")
+async def api_logout(request: Request):
+    """Clears session cookie and redirects to /login."""
+    officer = await get_current_officer(request)
+    if officer:
+        audit_event(
+            user_id=officer["user_id"],
+            action="LOGOUT",
+            target="AUTH_TERMINAL",
+            details=f"Officer {officer['user_id']} logged out",
+            request=request
+        )
+    response = RedirectResponse(url="/login", status_code=303)
+    response.delete_cookie(key=SESSION_COOKIE_NAME)
+    return response
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard_page(
+    request: Request,
+    officer: Optional[Dict[str, Any]] = Depends(get_current_officer)
+):
+    """
+    Protected dashboard route.
+    Redirects unauthenticated visitors to /login.
+    """
+    if not officer:
+        return RedirectResponse(url="/login", status_code=303)
+
+    template = jinja_env.get_template("index.html")
+    return template.render(
+        kpi=kpi_state,
+        officer=officer,
         title="IBVAP — Command Center Dashboard"
     )
 
@@ -90,13 +244,23 @@ def generate_mjpeg_stream(camera_id: str):
 
 
 @app.get("/video_feed/{camera_id}")
-async def video_feed(camera_id: str):
+async def video_feed(
+    camera_id: str,
+    officer: Optional[Dict[str, Any]] = Depends(get_current_officer)
+):
     """
     MJPEG streaming endpoint for simulated border channels:
     - cam2: BOP-01 Perimeter (Sector Alpha)
     - cam3: BOP-02 Riverine (Restricted Buffer)
     - cam4: BOP-03 Checkpost-Alpha
+    Restricted to authenticated surveillance officers.
     """
+    if not officer:
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized Video Access: Active officer authentication required."
+        )
+
     if camera_id not in ["cam2", "cam3", "cam4"]:
         raise HTTPException(status_code=404, detail=f"Camera ID '{camera_id}' not found")
 
@@ -106,11 +270,57 @@ async def video_feed(camera_id: str):
     )
 
 
+@app.websocket("/ws/stream")
+async def websocket_stream_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint for live video stream and vision pipeline telemetry.
+    Checks session cookie in handshake. If unauthenticated, closes cleanly with code 1008 (Policy Violation).
+    """
+    officer = await get_current_officer(websocket)
+    if not officer:
+        await websocket.close(code=1008, reason="Authentication required")
+        return
+
+    await websocket.accept()
+    await websocket.send_text(json.dumps({
+        "type": "connection_ack",
+        "status": "STREAM_ACTIVE",
+        "officer": officer.get("user_id"),
+        "timestamp": time.time()
+    }))
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            try:
+                msg = json.loads(data)
+                if msg.get("type") == "ping":
+                    await websocket.send_text(json.dumps({"type": "pong", "timestamp": time.time()}))
+                else:
+                    await websocket.send_text(json.dumps({
+                        "type": "stream_telemetry",
+                        "status": "NOMINAL",
+                        "fps": 30,
+                        "targets": [],
+                        "timestamp": time.time()
+                    }))
+            except Exception:
+                await websocket.send_text(json.dumps({"type": "ack", "status": "RECEIVED"}))
+    except (WebSocketDisconnect, Exception):
+        pass
+
+
 @app.websocket("/ws/alerts")
 async def websocket_alerts_endpoint(websocket: WebSocket):
     """
     Real-time WebSocket hub for telemetry broadcasts, heartbeat, and alert logging.
+    Checks session cookie in handshake. If unauthenticated, closes cleanly with code 1008 (Policy Violation).
     """
+    officer = await get_current_officer(websocket)
+    if not officer:
+        await websocket.close(code=1008, reason="Authentication required")
+        return
+
     await websocket.accept()
     connected_clients.append(websocket)
 

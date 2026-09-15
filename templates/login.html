@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ title or "IBVAP Admin Login" }}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/style.css">
+  <style>
+    body {
+      min-height: 100vh;
+      background:
+        linear-gradient(rgba(0, 240, 255, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 240, 255, 0.04) 1px, transparent 1px),
+        radial-gradient(circle at 50% 30%, rgba(0, 180, 216, 0.16), transparent 34%),
+        #090d16;
+      background-size: 36px 36px, 36px 36px, auto, auto;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .admin-login-shell {
+      width: min(440px, 100%);
+      position: relative;
+      z-index: 2;
+    }
+
+    .admin-login-card {
+      background: rgba(15, 23, 42, 0.96);
+      border: 1px solid var(--border-tactical);
+      border-radius: 8px;
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.7), 0 0 32px rgba(0, 240, 255, 0.18);
+      overflow: hidden;
+    }
+
+    .admin-login-header {
+      background: #0b1120;
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 24px 26px 18px;
+      text-align: center;
+    }
+
+    .admin-login-header h1 {
+      font-family: var(--font-ui);
+      font-size: 36px;
+      line-height: 1;
+      letter-spacing: 4px;
+      color: #fff;
+      text-shadow: 0 0 18px rgba(0, 240, 255, 0.55);
+    }
+
+    .admin-login-header p {
+      margin-top: 8px;
+      color: var(--cyan-glow);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    .admin-login-form {
+      padding: 24px 26px 26px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .admin-login-form h2 {
+      font-family: var(--font-ui);
+      font-size: 18px;
+      letter-spacing: 2px;
+      text-align: center;
+      color: var(--text-main);
+    }
+
+    .admin-field {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+
+    .admin-field label {
+      color: var(--text-muted);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    .password-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+    }
+
+    .admin-input {
+      width: 100%;
+      background: #0a0f1d;
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      color: #fff;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      padding: 12px 13px;
+      outline: none;
+    }
+
+    .admin-input:focus {
+      border-color: var(--cyan-glow);
+      box-shadow: 0 0 12px rgba(0, 240, 255, 0.24);
+    }
+
+    .password-toggle {
+      min-width: 68px;
+      background: var(--cyan-dim);
+      border: 1px solid var(--border-tactical);
+      border-radius: 4px;
+      color: var(--cyan-glow);
+      cursor: pointer;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .admin-error {
+      display: none;
+      background: rgba(239, 68, 68, 0.16);
+      border: 1px solid var(--alert-red);
+      border-radius: 4px;
+      color: #fca5a5;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 10px 12px;
+      text-align: center;
+    }
+
+    .admin-error.is-visible {
+      display: block;
+    }
+
+    .admin-submit {
+      background: var(--cyan-glow);
+      border: none;
+      border-radius: 4px;
+      color: #031018;
+      cursor: pointer;
+      font-family: var(--font-ui);
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: 1.5px;
+      padding: 13px 16px;
+      text-transform: uppercase;
+      transition: transform 0.16s ease, box-shadow 0.16s ease;
+    }
+
+    .admin-submit:hover {
+      box-shadow: 0 0 18px rgba(0, 240, 255, 0.46);
+      transform: translateY(-1px);
+    }
+
+    .admin-submit:disabled {
+      cursor: wait;
+      opacity: 0.75;
+      transform: none;
+    }
+
+    .secure-note {
+      border-top: 1px solid rgba(51, 65, 85, 0.55);
+      color: var(--text-dim);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      padding-top: 14px;
+      text-align: center;
+      text-transform: uppercase;
+    }
+  </style>
+</head>
+<body>
+  <div class="crt-overlay"></div>
+
+  <main class="admin-login-shell">
+    <section class="admin-login-card">
+      <header class="admin-login-header">
+        <div class="badge-sih" style="justify-content: center; margin: 0 auto 14px; width: max-content;">
+          <span class="blink-dot"></span>
+          <span>Restricted Command Access</span>
+        </div>
+        <h1>IBVAP</h1>
+        <p>Intelligent Border Video Analytics Platform</p>
+      </header>
+
+      <form class="admin-login-form" id="admin-login-form" action="/login" method="POST">
+        <h2>ADMIN LOGIN</h2>
+
+        <div class="admin-error{% if error %} is-visible{% endif %}" id="admin-login-error">
+          {{ error or "Invalid admin credentials" }}
+        </div>
+
+        <div class="admin-field">
+          <label for="admin-username">Username</label>
+          <input class="admin-input" id="admin-username" name="username" type="text" autocomplete="username" required autofocus>
+        </div>
+
+        <div class="admin-field">
+          <label for="admin-password">Password</label>
+          <div class="password-row">
+            <input class="admin-input" id="admin-password" name="password" type="password" autocomplete="current-password" required>
+            <button class="password-toggle" id="toggle-password" type="button" aria-label="Show password">Show</button>
+          </div>
+        </div>
+
+        <button class="admin-submit" id="admin-submit" type="submit">Authenticate</button>
+        <div class="secure-note">Secure Command Center Access</div>
+      </form>
+    </section>
+  </main>
+
+  <script>
+    (function() {
+      const form = document.getElementById("admin-login-form");
+      const username = document.getElementById("admin-username");
+      const password = document.getElementById("admin-password");
+      const toggle = document.getElementById("toggle-password");
+      const error = document.getElementById("admin-login-error");
+      const submit = document.getElementById("admin-submit");
+
+      toggle.addEventListener("click", function() {
+        const showing = password.type === "text";
+        password.type = showing ? "password" : "text";
+        toggle.textContent = showing ? "Show" : "Hide";
+        toggle.setAttribute("aria-label", showing ? "Show password" : "Hide password");
+      });
+
+      form.addEventListener("submit", async function(event) {
+        event.preventDefault();
+        error.classList.remove("is-visible");
+        submit.disabled = true;
+        submit.textContent = "Authenticating...";
+
+        try {
+          const response = await fetch("/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              username: username.value.trim(),
+              password: password.value
+            })
+          });
+
+          if (response.ok) {
+            const data = await response.json().catch(function() { return {}; });
+            window.location.href = data.redirect || "/";
+            return;
+          }
+
+          error.textContent = "Invalid admin credentials";
+          error.classList.add("is-visible");
+        } catch (err) {
+          error.textContent = "Invalid admin credentials";
+          error.classList.add("is-visible");
+        } finally {
+          submit.disabled = false;
+          submit.textContent = "Authenticate";
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

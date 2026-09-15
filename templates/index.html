@@ -26,13 +26,20 @@
         <span>SIH 26187</span>
       </div>
       <div class="banner-title-group">
-        <h1>IBVAP — INTELLIGENT BORDER VIDEO ANALYTICS PLATFORM [DEMO MODE ACTIVE]</h1>
-        <div class="sub">PHASE 1: FOUNDATIONAL COMMAND CENTER DASHBOARD & VIDEO STREAMING GRID</div>
+        <h1>SHOURYA — INTELLIGENT BORDER VIDEO & ASSET PERIMETER (IBVAP)</h1>
+        <div class="sub">COMMAND CENTER DASHBOARD & TACTICAL SURVEILLANCE GRID</div>
       </div>
     </div>
 
     <div class="banner-right">
-      <div class="classification-tag">DEMO DRILL // LOCAL SECURE</div>
+      <!-- Active Officer Quick Badge in Header -->
+      <div class="header-officer-pill" id="header-officer-badge">
+        <span class="officer-indicator-dot" id="header-indicator-dot"></span>
+        <span id="header-officer-name">OFFICER: {{ officer.full_name if officer else 'Insp. Vikram Singh' }} [{{ officer.badge if (officer and officer.badge) else (officer.user_id if officer else 'BSF-8841') }}]</span>
+        <a href="/logout" id="btn-header-logout" class="nav-logout-link" title="Sign out and return to login">Logout</a>
+      </div>
+
+      <div class="classification-tag" id="header-classification-tag">RESTRICTED // DEFENSE GRID</div>
       <div class="clock-telemetry">
         <div class="time-val" id="clock-time">00:00:00.000</div>
         <div class="date-val" id="clock-date">2026-09-14 [IST]</div>
@@ -73,180 +80,276 @@
     </div>
   </section>
 
-  <!-- Main SOC Workspace: 2x2 CCTV Grid -->
+  <!-- Main SOC Workspace (Grid + Tactical Sidebar) -->
   <main class="soc-workspace">
-    <div class="cctv-grid-2x2">
+    <div class="workspace-layout">
+      
+      <!-- Left Area: 2x2 CCTV Grid -->
+      <div class="cctv-grid-container">
+        <div class="cctv-grid-2x2">
 
-      <!-- ========================================================
-           PANEL 1: CAM-01 [LOCAL SECTOR] (Interactive Webcam)
-           ======================================================== -->
-      <div class="cctv-panel" id="panel-cam1">
-        <!-- Top Panel HUD -->
-        <div class="panel-hud-header">
-          <div class="panel-header-left">
-            <span class="cam-badge">CAM-01</span>
-            <span class="cam-name">LOCAL SECTOR [OPTICAL INGEST]</span>
-          </div>
-          <div class="panel-header-right">
-            <!-- Dynamic Camera Device Selector -->
-            <select id="cam1-device-select" class="camera-select-dropdown" title="Switch Optical Hardware Input">
-              <option value="">Default Optical Sensor</option>
-            </select>
-            <div class="rec-indicator">
-              <span class="rec-dot"></span>
-              <span>REC</span>
+          <!-- ========================================================
+               PANEL 1: CAM-01 [LOCAL SECTOR] (Interactive Webcam)
+               ======================================================== -->
+          <div class="cctv-panel" id="panel-cam1">
+            <div class="panel-hud-header">
+              <div class="panel-header-left">
+                <span class="cam-badge">CAM-01</span>
+                <span class="cam-name">LOCAL SECTOR [OPTICAL INGEST]</span>
+              </div>
+              <div class="panel-header-right">
+                <select id="cam1-device-select" class="camera-select-dropdown" title="Switch Optical Hardware Input">
+                  <option value="">Default Optical Sensor</option>
+                </select>
+                <div class="rec-indicator">
+                  <span class="rec-dot"></span>
+                  <span>REC</span>
+                </div>
+                <button class="btn-panel-action btn-maximize" data-panel="panel-cam1" title="Maximize Panel">⛶</button>
+              </div>
             </div>
-            <button class="btn-panel-action btn-maximize" data-panel="panel-cam1" title="Maximize Panel">⛶</button>
-          </div>
-        </div>
 
-        <!-- Viewport Stage -->
-        <div class="panel-viewport">
-          <!-- WebRTC Local Webcam Video -->
-          <video id="cam1-video" autoplay playsinline muted></video>
-          <!-- Overlaid Canvas Scaffolding for BBoxes & Polygon Zones -->
-          <canvas id="cam1-overlay"></canvas>
-          <!-- Tactical HUD Crosshair & Corners -->
-          <div class="tactical-crosshair"></div>
-          <div class="corner-bracket corner-top-left"></div>
-          <div class="corner-bracket corner-top-right"></div>
-          <div class="corner-bracket corner-bottom-left"></div>
-          <div class="corner-bracket corner-bottom-right"></div>
-        </div>
+            <div class="panel-viewport">
+              <video id="cam1-video" autoplay playsinline muted></video>
+              <canvas id="cam1-overlay"></canvas>
+              <div class="tactical-crosshair"></div>
+              <div class="corner-bracket corner-top-left"></div>
+              <div class="corner-bracket corner-top-right"></div>
+              <div class="corner-bracket corner-bottom-left"></div>
+              <div class="corner-bracket corner-bottom-right"></div>
+            </div>
 
-        <!-- Bottom Panel HUD -->
-        <div class="panel-hud-footer">
-          <div class="footer-meta-left">
-            <span>RES: <strong>1280x720</strong></span>
-            <span>CODEC: <strong>RAW/H.264</strong></span>
-            <span>TIME: <strong class="panel-live-ts">--:--:--.--</strong></span>
+            <div class="panel-hud-footer">
+              <div class="footer-meta-left">
+                <span>RES: <strong>1280x720</strong></span>
+                <span>CODEC: <strong>RAW/H.264</strong></span>
+                <span>TIME: <strong class="panel-live-ts">--:--:--.--</strong></span>
+              </div>
+              <div class="footer-meta-right">
+                <span class="fps-tag" id="cam1-fps">30 FPS</span>
+                <span class="status-tag">HARDWARE LOCKED</span>
+              </div>
+            </div>
           </div>
-          <div class="footer-meta-right">
-            <span class="fps-tag" id="cam1-fps">30 FPS</span>
-            <span class="status-tag">HARDWARE LOCKED</span>
+
+          <!-- ========================================================
+               PANEL 2: CAM-02 [BOP-01 PERIMETER] (Simulated MJPEG)
+               ======================================================== -->
+          <div class="cctv-panel" id="panel-cam2">
+            <div class="panel-hud-header">
+              <div class="panel-header-left">
+                <span class="cam-badge">CAM-02</span>
+                <span class="cam-name">BOP-01 PERIMETER [SECTOR ALPHA]</span>
+              </div>
+              <div class="panel-header-right">
+                <div class="rec-indicator">
+                  <span class="rec-dot"></span>
+                  <span>REC</span>
+                </div>
+                <button class="btn-panel-action btn-maximize" data-panel="panel-cam2" title="Maximize Panel">⛶</button>
+              </div>
+            </div>
+
+            <div class="panel-viewport">
+              <img id="cam2-stream-img" src="/video_feed/cam2" alt="CAM-02 Live Feed" loading="eager">
+              <div class="tactical-crosshair"></div>
+              <div class="corner-bracket corner-top-left"></div>
+              <div class="corner-bracket corner-top-right"></div>
+              <div class="corner-bracket corner-bottom-left"></div>
+              <div class="corner-bracket corner-bottom-right"></div>
+            </div>
+
+            <div class="panel-hud-footer">
+              <div class="footer-meta-left">
+                <span>RES: <strong>720P-NVD</strong></span>
+                <span>SENSOR: <strong>GEN-III PHOSPHOR</strong></span>
+                <span>TIME: <strong class="panel-live-ts">--:--:--.--</strong></span>
+              </div>
+              <div class="footer-meta-right">
+                <span class="fps-tag">25 FPS</span>
+                <span class="status-tag">STREAM ACTIVE</span>
+              </div>
+            </div>
           </div>
+
+          <!-- ========================================================
+               PANEL 3: CAM-03 [RESTRICTED BUFFER] (Simulated MJPEG)
+               ======================================================== -->
+          <div class="cctv-panel" id="panel-cam3">
+            <div class="panel-hud-header">
+              <div class="panel-header-left">
+                <span class="cam-badge">CAM-03</span>
+                <span class="cam-name">RESTRICTED BUFFER [RIVERINE ZONE]</span>
+              </div>
+              <div class="panel-header-right">
+                <div class="rec-indicator">
+                  <span class="rec-dot"></span>
+                  <span>REC</span>
+                </div>
+                <button class="btn-panel-action btn-maximize" data-panel="panel-cam3" title="Maximize Panel">⛶</button>
+              </div>
+            </div>
+
+            <div class="panel-viewport">
+              <img id="cam3-stream-img" src="/video_feed/cam3" alt="CAM-03 Live Feed" loading="eager">
+              <div class="tactical-crosshair"></div>
+              <div class="corner-bracket corner-top-left"></div>
+              <div class="corner-bracket corner-top-right"></div>
+              <div class="corner-bracket corner-bottom-left"></div>
+              <div class="corner-bracket corner-bottom-right"></div>
+            </div>
+
+            <div class="panel-hud-footer">
+              <div class="footer-meta-left">
+                <span>RES: <strong>640x360</strong></span>
+                <span>SENSOR: <strong>FLIR THERMAL IR</strong></span>
+                <span>TIME: <strong class="panel-live-ts">--:--:--.--</strong></span>
+              </div>
+              <div class="footer-meta-right">
+                <span class="fps-tag">25 FPS</span>
+                <span class="status-tag">STREAM ACTIVE</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- ========================================================
+               PANEL 4: CAM-04 [CHECKPOST-ALPHA] (Simulated MJPEG)
+               ======================================================== -->
+          <div class="cctv-panel" id="panel-cam4">
+            <div class="panel-hud-header">
+              <div class="panel-header-left">
+                <span class="cam-badge">CAM-04</span>
+                <span class="cam-name">CHECKPOST-ALPHA [BARRIER GATE]</span>
+              </div>
+              <div class="panel-header-right">
+                <div class="rec-indicator">
+                  <span class="rec-dot"></span>
+                  <span>REC</span>
+                </div>
+                <button class="btn-panel-action btn-maximize" data-panel="panel-cam4" title="Maximize Panel">⛶</button>
+              </div>
+            </div>
+
+            <div class="panel-viewport">
+              <img id="cam4-stream-img" src="/video_feed/cam4" alt="CAM-04 Live Feed" loading="eager">
+              <!-- Gate Lockdown HUD Warning Banner -->
+              <div class="gate-lockdown-banner" id="gate02-hud-banner" style="display: none;">
+                ⚠️ GATE 02 LOCKDOWN DEPLOYED // HYDRAULIC BARRIER ACTIVE
+              </div>
+              <div class="tactical-crosshair"></div>
+              <div class="corner-bracket corner-top-left"></div>
+              <div class="corner-bracket corner-top-right"></div>
+              <div class="corner-bracket corner-bottom-left"></div>
+              <div class="corner-bracket corner-bottom-right"></div>
+            </div>
+
+            <div class="panel-hud-footer">
+              <div class="footer-meta-left">
+                <span>RES: <strong>720P-HD</strong></span>
+                <span>SENSOR: <strong>ANPR / LASER SCAN</strong></span>
+                <span>TIME: <strong class="panel-live-ts">--:--:--.--</strong></span>
+              </div>
+              <div class="footer-meta-right">
+                <span class="fps-tag">25 FPS</span>
+                <span class="status-tag" id="cam4-gate-status-text">GATE ARMED</span>
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
 
-      <!-- ========================================================
-           PANEL 2: CAM-02 [BOP-01 PERIMETER] (Simulated MJPEG)
-           ======================================================== -->
-      <div class="cctv-panel" id="panel-cam2">
-        <div class="panel-hud-header">
-          <div class="panel-header-left">
-            <span class="cam-badge">CAM-02</span>
-            <span class="cam-name">BOP-01 PERIMETER [SECTOR ALPHA]</span>
+      <!-- Right Area: Tactical Incident & Personnel Sidebar -->
+      <aside class="soc-sidebar">
+
+        <!-- Card 1: OFFICIAL OFFICER PROFILE HUD (Requirement 5) -->
+        <div class="sidebar-card officer-hud-card" id="officer-hud-card">
+          <div class="card-header">
+            <span class="card-title-icon" id="hud-officer-icon">🎖️</span>
+            <span class="card-title">ACTIVE DUTY OFFICER</span>
+            <span class="duty-beacon" id="hud-duty-beacon"></span>
           </div>
-          <div class="panel-header-right">
-            <div class="rec-indicator">
-              <span class="rec-dot"></span>
-              <span>REC</span>
+
+          <div class="officer-profile-body">
+            <div class="officer-avatar-box" id="hud-avatar-box">
+              <div class="avatar-silhouette" id="hud-avatar-symbol">🎖️</div>
+              <div class="officer-meta">
+                <div class="officer-name" id="hud-officer-name">Brig. Ajay Verma</div>
+                <div class="officer-role" id="hud-officer-rank">SECTOR COMMANDER</div>
+              </div>
             </div>
-            <button class="btn-panel-action btn-maximize" data-panel="panel-cam2" title="Maximize Panel">⛶</button>
-          </div>
-        </div>
 
-        <div class="panel-viewport">
-          <img src="/video_feed/cam2" alt="CAM-02 Live Feed" loading="eager">
-          <div class="tactical-crosshair"></div>
-          <div class="corner-bracket corner-top-left"></div>
-          <div class="corner-bracket corner-top-right"></div>
-          <div class="corner-bracket corner-bottom-left"></div>
-          <div class="corner-bracket corner-bottom-right"></div>
-        </div>
-
-        <div class="panel-hud-footer">
-          <div class="footer-meta-left">
-            <span>RES: <strong>720P-NVD</strong></span>
-            <span>SENSOR: <strong>GEN-III PHOSPHOR</strong></span>
-            <span>TIME: <strong class="panel-live-ts">--:--:--.--</strong></span>
-          </div>
-          <div class="footer-meta-right">
-            <span class="fps-tag">25 FPS</span>
-            <span class="status-tag">STREAM ACTIVE</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- ========================================================
-           PANEL 3: CAM-03 [RESTRICTED BUFFER] (Simulated MJPEG)
-           ======================================================== -->
-      <div class="cctv-panel" id="panel-cam3">
-        <div class="panel-hud-header">
-          <div class="panel-header-left">
-            <span class="cam-badge">CAM-03</span>
-            <span class="cam-name">RESTRICTED BUFFER [RIVERINE ZONE]</span>
-          </div>
-          <div class="panel-header-right">
-            <div class="rec-indicator">
-              <span class="rec-dot"></span>
-              <span>REC</span>
+            <div class="officer-details-grid">
+              <div class="detail-item">
+                <span class="detail-lbl">MILITARY USER ID</span>
+                <span class="detail-val highlight-id" id="hud-officer-id">HQ-CDR-01</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-lbl">CLEARANCE LEVEL</span>
+                <span class="detail-val clearance-tag" id="hud-officer-clearance">CLEARANCE LEVEL 4</span>
+              </div>
+              <div class="detail-item full-width-item">
+                <span class="detail-lbl">ASSIGNED SECTOR</span>
+                <span class="detail-val" id="hud-officer-sector">Sector Alpha - Post 04</span>
+              </div>
+              <div class="detail-item full-width-item session-timer-box">
+                <span class="detail-lbl">SESSION DURATION</span>
+                <span class="detail-val timer-val" id="hud-session-timer">00:00:00</span>
+              </div>
             </div>
-            <button class="btn-panel-action btn-maximize" data-panel="panel-cam3" title="Maximize Panel">⛶</button>
-          </div>
-        </div>
 
-        <div class="panel-viewport">
-          <img src="/video_feed/cam3" alt="CAM-03 Live Feed" loading="eager">
-          <div class="tactical-crosshair"></div>
-          <div class="corner-bracket corner-top-left"></div>
-          <div class="corner-bracket corner-top-right"></div>
-          <div class="corner-bracket corner-bottom-left"></div>
-          <div class="corner-bracket corner-bottom-right"></div>
-        </div>
-
-        <div class="panel-hud-footer">
-          <div class="footer-meta-left">
-            <span>RES: <strong>640x360</strong></span>
-            <span>SENSOR: <strong>FLIR THERMAL IR</strong></span>
-            <span>TIME: <strong class="panel-live-ts">--:--:--.--</strong></span>
-          </div>
-          <div class="footer-meta-right">
-            <span class="fps-tag">25 FPS</span>
-            <span class="status-tag">STREAM ACTIVE</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- ========================================================
-           PANEL 4: CAM-04 [CHECKPOST-ALPHA] (Simulated MJPEG)
-           ======================================================== -->
-      <div class="cctv-panel" id="panel-cam4">
-        <div class="panel-hud-header">
-          <div class="panel-header-left">
-            <span class="cam-badge">CAM-04</span>
-            <span class="cam-name">CHECKPOST-ALPHA [BARRIER GATE]</span>
-          </div>
-          <div class="panel-header-right">
-            <div class="rec-indicator">
-              <span class="rec-dot"></span>
-              <span>REC</span>
+            <!-- Action Row -->
+            <div class="officer-action-row">
+              <!-- Level 4 Only: Officer Audit Log Drawer Button -->
+              <button class="btn-sidebar btn-audit" id="btn-open-audit-drawer" title="View Full Officer Audit Log (Level 4 Only)">
+                📜 OFFICER AUDIT LOG
+              </button>
+              <!-- Level 4 Only: Virtual Fence Configuration Button -->
+              <button class="btn-sidebar btn-fence" id="btn-open-fence-modal" title="Configure Virtual Fence (Level 4 Only)">
+                ⚡ VIRTUAL FENCE
+              </button>
+              <!-- All Authenticated Officers: Sign Out -->
+              <button class="btn-sidebar btn-logout" id="btn-logout" title="Terminate Session">
+                🔒 SIGN OUT
+              </button>
             </div>
-            <button class="btn-panel-action btn-maximize" data-panel="panel-cam4" title="Maximize Panel">⛶</button>
           </div>
         </div>
 
-        <div class="panel-viewport">
-          <img src="/video_feed/cam4" alt="CAM-04 Live Feed" loading="eager">
-          <div class="tactical-crosshair"></div>
-          <div class="corner-bracket corner-top-left"></div>
-          <div class="corner-bracket corner-top-right"></div>
-          <div class="corner-bracket corner-bottom-left"></div>
-          <div class="corner-bracket corner-bottom-right"></div>
+        <!-- Card 2: TACTICAL DEFENSIVE COUNTERMEASURES -->
+        <div class="sidebar-card countermeasures-card">
+          <div class="card-header">
+            <span class="card-title-icon">🛡️</span>
+            <span class="card-title">DEFENSIVE STATUS</span>
+          </div>
+
+          <div class="countermeasures-list">
+            <div class="countermeasure-row">
+              <span class="cm-name">Virtual Gate 02</span>
+              <span class="status-pill status-secure" id="cm-gate-status">OPEN / ARMED</span>
+              <button class="btn-mini-action" id="btn-quick-toggle-gate">TOGGLE</button>
+            </div>
+            <div class="countermeasure-row">
+              <span class="cm-name">Perimeter Siren</span>
+              <span class="status-pill status-standby" id="cm-siren-status">STANDBY</span>
+              <button class="btn-mini-action" id="btn-quick-toggle-siren">TEST</button>
+            </div>
+          </div>
         </div>
 
-        <div class="panel-hud-footer">
-          <div class="footer-meta-left">
-            <span>RES: <strong>720P-HD</strong></span>
-            <span>SENSOR: <strong>ANPR / LASER SCAN</strong></span>
-            <span>TIME: <strong class="panel-live-ts">--:--:--.--</strong></span>
+        <!-- Card 3: SIGNED INCIDENT AUDIT LOGS -->
+        <div class="sidebar-card incidents-card">
+          <div class="card-header">
+            <span class="card-title-icon">🚨</span>
+            <span class="card-title">ESCALATED INCIDENTS</span>
+            <button class="btn-refresh-log" id="btn-refresh-incidents" title="Refresh Incident Logs">↻</button>
           </div>
-          <div class="footer-meta-right">
-            <span class="fps-tag">25 FPS</span>
-            <span class="status-tag">STREAM ACTIVE</span>
+          <div class="incidents-scroll" id="incidents-list">
+            <div class="incident-item-empty">No escalated incidents logged yet.</div>
           </div>
         </div>
-      </div>
+
+      </aside>
 
     </div>
 
@@ -266,11 +369,257 @@
         <div class="log-entry">
           <span class="log-time">[SYSTEM]</span>
           <span class="log-source">[SOC-INIT]</span>
-          <span class="log-msg">IBVAP Phase 1 Command Center active. Synchronizing 4 CCTV surveillance channels.</span>
+          <span class="log-msg">IBVAP Command Center active. Surveillance streams online.</span>
         </div>
       </div>
     </footer>
   </main>
+
+  <!-- =================================================================
+       MODAL 1: DEFENSE LOGIN SCREEN (Requirement 4)
+       Dark glassmorphic defense-style login overlay
+       ================================================================= -->
+  <div class="tactical-modal-overlay" id="login-modal" style="display: flex;">
+    <div class="tactical-login-card">
+      <div class="login-card-header">
+        <div class="badge-sih">
+          <span class="blink-dot"></span>
+          <span>RESTRICTED ACCESS // DEFENSE TERMINAL</span>
+        </div>
+        <h2>IBVAP</h2>
+        <p>INTELLIGENT BORDER VIDEO ANALYTICS PLATFORM</p>
+        <div class="defense-terminal-tag">SECURITY CLEARANCE AUTHENTICATION GATEWAY</div>
+      </div>
+
+      <!-- Error Alert Message -->
+      <div class="login-error-banner" id="login-error-msg" style="display: none;">
+        Authentication Failed: Invalid Military ID or Access Code.
+      </div>
+
+      <!-- Credentials Form -->
+      <form id="login-form" class="login-form" onsubmit="return false;">
+        <div class="input-group">
+          <label for="login-username">MILITARY ID</label>
+          <input type="text" id="login-username" class="tactical-text-input" placeholder="e.g. HQ-CDR-01 or OP-SECT-04" required autocomplete="username">
+        </div>
+
+        <div class="input-group">
+          <label for="login-password">PASSWORD</label>
+          <input type="password" id="login-password" class="tactical-text-input" placeholder="••••••••••••" required autocomplete="current-password">
+        </div>
+
+        <div class="remember-terminal-row">
+          <label class="custom-checkbox">
+            <input type="checkbox" id="login-remember">
+            <span class="checkmark"></span>
+            <span>Remember Terminal (Persistent Session)</span>
+          </label>
+        </div>
+
+        <!-- Quick-Fill Demo Profiles for Acceptance Testing -->
+        <div class="quick-demo-section">
+          <div class="quick-demo-label">SELECT ROLE PROFILE (1-CLICK QUICK AUTH):</div>
+          <div class="quick-demo-buttons">
+            <button type="button" class="btn-quick-fill btn-quick-cdr" id="btn-fill-commander">
+              🎖️ LEVEL 4 — HIGH COMMAND: HQ-CDR-01 / Commander@2026 (Brig. Ajay Verma)
+            </button>
+            <button type="button" class="btn-quick-fill btn-quick-op" id="btn-fill-operator">
+              🛡️ LEVEL 2 — FIELD CONTROLLER: OP-SECT-04 / Operator@2026 (Sub-Insp. Neeraj Rao)
+            </button>
+          </div>
+        </div>
+
+        <button type="submit" class="btn-login-submit" id="btn-login-submit">
+          AUTHENTICATE
+        </button>
+      </form>
+
+      <div class="login-footer-disclaimer">
+        SECURITY PROTOCOL: All authentication events and subsequent operational actions are recorded authoritatively in the secure audit log.
+      </div>
+    </div>
+  </div>
+
+  <!-- =================================================================
+       MODAL 2: TACTICAL INCIDENT ESCALATION & QRT DISPATCH (Requirement 10)
+       ================================================================= -->
+  <div class="tactical-modal-overlay" id="escalation-modal" style="display: none;">
+    <div class="tactical-modal-card escalation-card">
+      <div class="modal-card-header alert-header">
+        <div class="alert-icon">⚠️</div>
+        <div>
+          <h3>THREAT ESCALATION & QRT DISPATCH</h3>
+          <p>CODE RED INTERCEPT PROTOCOL</p>
+        </div>
+        <button class="btn-modal-close" id="btn-close-escalation">✕</button>
+      </div>
+
+      <div class="modal-card-body">
+        <!-- Threat Synopsis -->
+        <div class="threat-synopsis-box">
+          <div class="synopsis-row">
+            <span>INCIDENT ID:</span>
+            <strong class="highlight-red" id="esc-incident-id">ALERT-1042</strong>
+          </div>
+          <div class="synopsis-row">
+            <span>TARGET CAMERA:</span>
+            <strong id="esc-threat-source">CAM-02 [BOP-01 PERIMETER]</strong>
+          </div>
+          <div class="synopsis-row">
+            <span>EVENT DETAILS:</span>
+            <span id="esc-threat-desc">Perimeter Intrusion Detected</span>
+          </div>
+          <div class="synopsis-row">
+            <span>FIRST RESPONDER:</span>
+            <strong class="highlight-cyan" id="esc-first-responder">--</strong>
+          </div>
+        </div>
+
+        <!-- QRT Unit Assignment -->
+        <div class="form-group-tactical">
+          <label for="esc-qrt-select">DISPATCH QUICK REACTION TEAM</label>
+          <select id="esc-qrt-select" class="tactical-select-box">
+            <option value="QRT Unit 1 (Sector Alpha Quick Intercept - 4 Commando Team)" selected>
+              QRT Unit 1 (Sector Alpha Quick Intercept - 4 Commando Team)
+            </option>
+            <option value="QRT Unit 2 (Perimeter Heavy Support - Armored Unit)">
+              QRT Unit 2 (Perimeter Heavy Support - Armored Unit)
+            </option>
+            <option value="Direct Duty Officer Assignment">
+              Direct Duty Officer Assignment
+            </option>
+          </select>
+        </div>
+
+        <!-- Tactical Defensive Triggers -->
+        <div class="form-group-tactical">
+          <label>DEFENSIVE COUNTERMEASURES</label>
+          <div class="defensive-checkboxes">
+            <label class="custom-checkbox">
+              <input type="checkbox" id="chk-siren" checked>
+              <span class="checkmark"></span>
+              <span>Sound Sector Perimeter Siren (Tactical Buzzer)</span>
+            </label>
+            <label class="custom-checkbox">
+              <input type="checkbox" id="chk-gate-lockdown" checked>
+              <span class="checkmark"></span>
+              <span>Lockdown Virtual Gate 02 (Deploy Hydraulic Barricade)</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="modal-actions-row">
+          <button class="btn-cancel-modal" id="btn-cancel-escalation">CANCEL</button>
+          <button class="btn-confirm-escalate" id="btn-confirm-escalation">
+            🚀 DISPATCH QRT & LOG INCIDENT
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =================================================================
+       MODAL 3: VIRTUAL FENCE CONFIGURATION (Requirement 3: Level 4 Only)
+       ================================================================= -->
+  <div class="tactical-modal-overlay" id="fence-modal" style="display: none;">
+    <div class="tactical-modal-card fence-card">
+      <div class="modal-card-header">
+        <div class="badge-sih">LEVEL 4 HIGH COMMAND</div>
+        <h3>CONFIGURE VIRTUAL FENCE / EXCLUSION ZONE</h3>
+        <button class="btn-modal-close" id="btn-close-fence-modal">✕</button>
+      </div>
+
+      <div class="modal-card-body">
+        <div class="form-group-tactical">
+          <label for="fence-camera-select">TARGET SURVEILLANCE CHANNEL</label>
+          <select id="fence-camera-select" class="tactical-select-box">
+            <option value="CAM-01">CAM-01 [LOCAL SECTOR]</option>
+            <option value="CAM-02">CAM-02 [BOP-01 PERIMETER]</option>
+            <option value="CAM-03">CAM-03 [RESTRICTED BUFFER]</option>
+            <option value="CAM-04">CAM-04 [CHECKPOST-ALPHA]</option>
+          </select>
+        </div>
+
+        <div class="form-group-tactical">
+          <label for="fence-zone-name">EXCLUSION ZONE IDENTIFIER</label>
+          <input type="text" id="fence-zone-name" class="tactical-text-input" value="RESTRICTED_BUFFER_ALPHA">
+        </div>
+
+        <div class="form-group-tactical">
+          <label>TRIPWIRE SENSITIVITY LEVEL</label>
+          <div class="defensive-checkboxes">
+            <label class="custom-checkbox">
+              <input type="radio" name="fence_mode" value="HIGH_SENSITIVITY" checked>
+              <span class="checkmark"></span>
+              <span>High Sensitivity (Instant Perimeter Breach Alarm)</span>
+            </label>
+            <label class="custom-checkbox">
+              <input type="radio" name="fence_mode" value="STANDARD_BUFFER">
+              <span class="checkmark"></span>
+              <span>Standard Buffer Zone (Multi-Stage Verification)</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="modal-actions-row">
+          <button class="btn-cancel-modal" id="btn-cancel-fence">CANCEL</button>
+          <button class="btn-confirm-escalate" id="btn-save-fence" style="background: var(--gold-commander); color: #000;">
+            💾 SAVE CONFIGURATION & AUDIT
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =================================================================
+       OFFICER AUDIT LOG SLIDING DRAWER (Requirement 9: Level 4 Only)
+       ================================================================= -->
+  <div class="audit-drawer-overlay" id="audit-drawer-overlay" style="display: none;">
+    <aside class="audit-drawer" id="audit-drawer">
+      <div class="audit-drawer-header">
+        <div class="audit-header-title">
+          <span class="audit-crest">📜</span>
+          <div>
+            <h3>OFFICER AUDIT LOG</h3>
+            <p>FULL-SPECTRUM TACTICAL AUDIT TRAIL [LEVEL 4 RESTRICTED]</p>
+          </div>
+        </div>
+        <button class="btn-close-drawer" id="btn-close-audit-drawer">✕</button>
+      </div>
+
+      <div class="audit-drawer-controls">
+        <input type="text" id="audit-search-input" class="tactical-text-input audit-search-input" placeholder="Search by Officer, Action, or Target...">
+        <button class="btn-refresh-audit" id="btn-refresh-audit-logs">↻ REFRESH</button>
+      </div>
+
+      <div class="audit-drawer-body">
+        <div class="audit-table-wrapper">
+          <table class="audit-table">
+            <thead>
+              <tr>
+                <th>TIMESTAMP</th>
+                <th>OFFICER ID</th>
+                <th>OFFICER NAME</th>
+                <th>RANK</th>
+                <th>ACTION</th>
+                <th>TARGET</th>
+                <th>DETAILS</th>
+              </tr>
+            </thead>
+            <tbody id="audit-logs-tbody">
+              <!-- Dynamically populated from /auth/audit-logs -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="audit-drawer-footer">
+        <span id="audit-log-count">0 events recorded</span>
+        <span>AUTHORITATIVE BACKEND AUDIT // SQLITE</span>
+      </div>
+    </aside>
+  </div>
 
   <!-- Dashboard JavaScript Engine -->
   <script src="/static/js/dashboard.js"></script>
