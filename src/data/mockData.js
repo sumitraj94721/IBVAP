@@ -20,16 +20,16 @@ export const INITIAL_CAMERAS = [
   },
   {
     id: "CAM-02",
-    name: "Sector Bravo [BOP-01 Perimeter]",
+    name: "REMOTE OPTICAL · SECTOR BRAVO",
     sector: "Sector Bravo",
-    type: "GEN-III PHOSPHOR NVD",
-    sensor: "NIGHT VISION OPTICS",
+    type: "EDGE NODE",
+    sensor: "REMOTE WEBCAM",
     resolution: "1280x720",
-    status: "ONLINE",
-    fps: 30,
-    signal: "Strong",
-    lastDetection: "Suspicious Movement",
-    lastDetectionTime: "3 mins ago",
+    status: "OFFLINE",
+    fps: 0,
+    signal: "Network",
+    lastDetection: "Awaiting remote stream",
+    lastDetectionTime: "--",
     azimuth: "118° ESE",
     elevation: "+06.5°",
     coordinates: "32°11'58\"N 74°52'42\"E",
@@ -72,18 +72,6 @@ export const INITIAL_CAMERAS = [
 ];
 
 export const INITIAL_ALERTS = [
-  {
-    id: "ALT-9041",
-    severity: "CRITICAL",
-    title: "Unauthorized person detected at fence breach line",
-    sector: "Sector Bravo",
-    camera: "CAM-02",
-    confidence: 94,
-    timestamp: "09:42:18",
-    status: "ACTIVE",
-    targetId: "LOC_#01",
-    description: "Centroid tracker locked on perimeter breach attempt near boundary pillar BP-44.",
-  },
   {
     id: "ALT-9040",
     severity: "CRITICAL",
@@ -144,18 +132,6 @@ export const INITIAL_ALERTS = [
     targetId: "PATROL_#3",
     description: "Regular verification beacon received from BSF QRT Alpha-3 patrol vehicle.",
   },
-  {
-    id: "ALT-9022",
-    severity: "LOW",
-    title: "Wildlife movement filtered by neural classifier",
-    sector: "Sector Bravo",
-    camera: "CAM-02",
-    confidence: 68,
-    timestamp: "08:58:22",
-    status: "RESOLVED",
-    targetId: "BIO_#14",
-    description: "FER+ filter classified feral animal silhouette; threat suppressed from main alarm.",
-  }
 ];
 
 export const INITIAL_TIMELINE = [
@@ -231,10 +207,10 @@ export const SECTOR_MAP_DATA = [
     id: "sec-bravo",
     name: "Sector Bravo",
     code: "SEC-B",
-    status: "CRITICAL",
+    status: "STANDBY",
     cameras: ["CAM-02"],
-    personnel: "QRT Delta-2 (Dispatched)",
-    threats: 2,
+    personnel: "Remote edge node (awaiting link)",
+    threats: 0,
     bounds: { x: 230, y: 30, w: 200, h: 160 },
     center: { x: 330, y: 110 },
   },

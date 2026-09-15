@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.face_pipeline import SurveillanceVisionPipeline
-from backend.camera_streamer import OpenCVCameraStreamer
+from backend.camera_streamer import OpenCVCameraStreamer, RemoteCameraStreamer
 from backend.storage_sync import StorageSyncManager
 from backend.auth_router import auth_router
 
@@ -68,7 +68,28 @@ app.include_router(auth_router)
 pipeline = SurveillanceVisionPipeline(engine="yunet")
 storage = StorageSyncManager(project_root=PROJECT_ROOT)
 backend_camera: Optional[OpenCVCameraStreamer] = None
+edge_camera: Optional[OpenCVCameraStreamer] = None
+remote_camera: Optional[RemoteCameraStreamer] = None
 last_event_at: Dict[str, float] = {}
+
+CAM2_ENABLED = os.getenv("CAM2_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+CAM2_NAME = os.getenv("CAM2_NAME", "Sector Bravo")
+CAM2_SOURCE_TYPE = os.getenv("CAM2_SOURCE_TYPE", "EDGE_NODE")
+CAM2_STREAM_URL = os.getenv("CAM2_STREAM_URL", "").strip()
+EDGE_NODE_MODE = os.getenv("EDGE_NODE", "false").lower() in {"1", "true", "yes", "on"}
+EDGE_CAMERA_INDEX = int(os.getenv("EDGE_CAMERA_INDEX", "0"))
+
+
+def get_remote_camera() -> Optional[RemoteCameraStreamer]:
+    global remote_camera
+    if not CAM2_ENABLED or not CAM2_STREAM_URL:
+        return None
+    if remote_camera is None or remote_camera.stream_url != CAM2_STREAM_URL:
+        if remote_camera:
+            remote_camera.stop()
+        remote_camera = RemoteCameraStreamer(CAM2_STREAM_URL)
+        remote_camera.start()
+    return remote_camera
 
 # Mount snapshots directory
 if os.path.exists(SNAPSHOT_DIR):
@@ -113,6 +134,26 @@ async def get_available_cameras():
     """Enumerates local physical camera devices via OpenCV."""
     cameras = OpenCVCameraStreamer.list_available_cameras(max_tested=3)
     return {"cameras": cameras}
+
+
+@app.get("/api/cameras/cam2/status")
+async def get_cam2_status():
+    """Returns live configuration and connectivity for the remote CAM-02 node."""
+    camera = get_remote_camera()
+    status = camera.status() if camera else {
+        "connected": False,
+        "stream_status": "DISABLED" if not CAM2_ENABLED else "OFFLINE",
+        "resolution": None,
+        "latency_ms": None,
+        "error": "CAM2_STREAM_URL is not configured" if CAM2_ENABLED else "CAM-02 disabled",
+    }
+    return {
+        "id": "CAM-02",
+        "name": CAM2_NAME,
+        "source_type": CAM2_SOURCE_TYPE,
+        "enabled": CAM2_ENABLED,
+        **status,
+    }
 
 
 @app.get("/api/events/pending")
@@ -395,10 +436,63 @@ def generate_mjpeg():
         time.sleep(0.033)
 
 
+def generate_remote_mjpeg(camera: RemoteCameraStreamer):
+    """Re-encodes real remote frames and runs them through the shared AI pipeline."""
+    while True:
+        frame = camera.get_latest_frame()
+        if frame is not None:
+            pipeline.process_frame(frame)
+            ret, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+            if ret:
+                yield (b"--frame\r\n"
+                       b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n")
+        time.sleep(0.033)
+
+
+def generate_edge_mjpeg(camera: OpenCVCameraStreamer):
+    """Serves the edge laptop's physical webcam as a real MJPEG stream."""
+    while True:
+        frame = camera.get_latest_frame()
+        if frame is not None:
+            ret, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+            if ret:
+                yield (b"--frame\r\n"
+                       b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n")
+        time.sleep(0.033)
+
+
 @app.get("/video_feed")
 def video_feed():
     """MJPEG stream endpoint for backend-driven OpenCV camera streaming."""
     return StreamingResponse(
         generate_mjpeg(),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+
+@app.get("/video_feed/cam2")
+def cam2_video_feed():
+    """Streams CAM-02 from the configured remote edge node when enabled."""
+    camera = get_remote_camera()
+    if camera is None:
+        return JSONResponse({"error": "CAM-02 is disabled or not configured"}, status_code=503)
+    return StreamingResponse(
+        generate_remote_mjpeg(camera),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+
+@app.get("/edge/video_feed")
+def edge_video_feed():
+    """Edge-node endpoint that exposes the teammate laptop's physical webcam."""
+    global edge_camera
+    if not EDGE_NODE_MODE:
+        return JSONResponse({"error": "EDGE_NODE mode is disabled"}, status_code=404)
+    if edge_camera is None:
+        edge_camera = OpenCVCameraStreamer(EDGE_CAMERA_INDEX)
+        if not edge_camera.start():
+            return JSONResponse({"error": "No webcam available on edge node"}, status_code=503)
+    return StreamingResponse(
+        generate_edge_mjpeg(edge_camera),
         media_type="multipart/x-mixed-replace; boundary=frame"
     )

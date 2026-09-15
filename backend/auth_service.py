@@ -18,63 +18,116 @@ SECRET_KEY = os.getenv("IBVAP_AUTH_SECRET", "IBVAP_TACTICAL_DEFENSE_AUTH_KEY_202
 SESSION_COOKIE_NAME = "ibvap_session"
 DEFAULT_SESSION_DURATION = 86400  # 24 hours
 REMEMBER_SESSION_DURATION = 604800 # 7 days
-DEMO_BYPASS_AUTH = os.getenv("DEMO_BYPASS_AUTH", "true").strip().lower() in {"1", "true", "yes", "on"}
+DEMO_BYPASS_AUTH = os.getenv("DEMO_BYPASS_AUTH", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def get_demo_officer(user_id: str = "") -> Dict[str, Any]:
-    """Return the full-privilege identity used by the optional demo bypass."""
-    resolved_user_id = user_id.strip() or "DEMO_ADMIN"
+    """Return the full-privilege identity used by the demo admin."""
+    resolved_user_id = user_id.strip() or "admin"
     return {
-        "id": 0,
+        "id": 1,
         "user_id": resolved_user_id,
-        "full_name": "IBVAP Demonstration Administrator",
-        "rank": "Commandant",
+        "username": resolved_user_id,
+        "full_name": "Insp. Vikram Singh",
+        "name": "Insp. Vikram Singh",
+        "rank": "Sector Commander",
         "role": "ADMIN",
-        "badge": "DEMO-ADMIN",
+        "badge": "BSF-8841",
+        "badge_id": "BSF-8841",
         "clearance_level": 4,
         "permissions": ["*"],
         "avatar_url": "tactical_commander_crest",
-        "active_shift": "DEMO",
-        "assigned_sector": "IBVAP Command Center"
+        "active_shift": "06:00 - 18:00 (Alpha Day Watch)",
+        "assigned_sector": "Sector Alpha - Post 04"
     }
 
 
 def authenticate_credentials(user_id: str, password: str) -> Optional[Dict[str, Any]]:
     """
-    Verifies user_id and password against SQLite operators table.
+    Verifies user_id and password against SQLite operators table or SIH demo credentials.
     Returns operator dictionary (without password/salt) if valid, None otherwise.
     """
+    clean_user = (user_id or "").strip()
+    if not clean_user or not password:
+        return None
+
     if DEMO_BYPASS_AUTH:
-        return get_demo_officer(user_id)
+        return get_demo_officer(clean_user)
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT id, user_id, password_hash, salt, full_name, rank,
-               clearance_level, avatar_url, active_shift, assigned_sector
-        FROM operators
-        WHERE user_id = ?
-    """, (user_id.strip(),))
-    row = cursor.fetchone()
-    conn.close()
+    # 1. SIH 2026 Primary Demo Credentials: admin / admin123
+    if clean_user.lower() == "admin":
+        if password != "admin123":
+            return None
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, user_id, password_hash, salt, full_name, rank,
+                       clearance_level, avatar_url, active_shift, assigned_sector
+                FROM operators
+                WHERE LOWER(user_id) = 'admin'
+            """)
+            row = cursor.fetchone()
+            conn.close()
+            if row:
+                return {
+                    "id": row["id"],
+                    "user_id": row["user_id"],
+                    "username": row["user_id"],
+                    "full_name": row["full_name"],
+                    "name": row["full_name"],
+                    "rank": row["rank"],
+                    "role": "ADMIN",
+                    "badge": "BSF-8841",
+                    "badge_id": "BSF-8841",
+                    "clearance_level": row["clearance_level"],
+                    "permissions": ["*"],
+                    "avatar_url": row["avatar_url"],
+                    "active_shift": row["active_shift"],
+                    "assigned_sector": row["assigned_sector"]
+                }
+        except Exception:
+            pass
+        return get_demo_officer("admin")
 
-    if not row:
+    # 2. Database validation for other personnel (e.g. HQ-CDR-01, OP-SECT-04, operator1)
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, user_id, password_hash, salt, full_name, rank,
+                   clearance_level, avatar_url, active_shift, assigned_sector
+            FROM operators
+            WHERE LOWER(user_id) = LOWER(?)
+        """, (clean_user,))
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row:
+            return None
+
+        computed_hash = hash_password(password, row["salt"])
+        if not hmac.compare_digest(computed_hash, row["password_hash"]):
+            return None
+
+        return {
+            "id": row["id"],
+            "user_id": row["user_id"],
+            "username": row["user_id"],
+            "full_name": row["full_name"],
+            "name": row["full_name"],
+            "rank": row["rank"],
+            "role": "ADMIN" if row["clearance_level"] >= 4 else "OPERATOR",
+            "badge": "BSF-8841" if row["user_id"] == "operator1" else f"BSF-{row['id']:04d}",
+            "badge_id": "BSF-8841" if row["user_id"] == "operator1" else f"BSF-{row['id']:04d}",
+            "clearance_level": row["clearance_level"],
+            "permissions": ["*"] if row["clearance_level"] >= 4 else ["SURVEILLANCE", "ALERTS"],
+            "avatar_url": row["avatar_url"],
+            "active_shift": row["active_shift"],
+            "assigned_sector": row["assigned_sector"]
+        }
+    except Exception:
         return None
-
-    computed_hash = hash_password(password, row["salt"])
-    if not hmac.compare_digest(computed_hash, row["password_hash"]):
-        return None
-
-    return {
-        "id": row["id"],
-        "user_id": row["user_id"],
-        "full_name": row["full_name"],
-        "rank": row["rank"],
-        "clearance_level": row["clearance_level"],
-        "avatar_url": row["avatar_url"],
-        "active_shift": row["active_shift"],
-        "assigned_sector": row["assigned_sector"]
-    }
 
 
 def create_session_token(operator: Dict[str, Any], remember: bool = False) -> str:

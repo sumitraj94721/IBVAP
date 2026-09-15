@@ -3,6 +3,19 @@ import React, { useState, useEffect } from 'react';
 export default function Header({ threatLevel, onLogout, isSirenActive, onToggleSiren }) {
   const [timeStr, setTimeStr] = useState('');
   const [dateStr, setDateStr] = useState('');
+  const [officerDisplay, setOfficerDisplay] = useState('Admin (BSF-HQ)');
+
+  useEffect(() => {
+    try {
+      const stored = sessionStorage.getItem('ibvap_auth_user');
+      if (stored) {
+        const u = JSON.parse(stored);
+        const name = u.name || u.full_name || u.username || 'Admin';
+        const badge = u.badge || u.badge_id || 'BSF-HQ';
+        setOfficerDisplay(`${name} (${badge})`);
+      }
+    } catch (_) {}
+  }, []);
 
   useEffect(() => {
     const updateClock = () => {
@@ -59,7 +72,7 @@ export default function Header({ threatLevel, onLogout, isSirenActive, onToggleS
         {/* Authenticated Officer Pill */}
         <div className="header-officer-pill">
           <span style={{ color: 'var(--gold-commander)' }}>🎖️</span>
-          <span>OFFICER: <strong>Admin (BSF-HQ)</strong></span>
+          <span>OFFICER: <strong>{officerDisplay}</strong></span>
           <button 
             className="btn-header-logout" 
             onClick={onLogout} 

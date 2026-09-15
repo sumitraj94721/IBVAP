@@ -114,6 +114,8 @@ async def require_level_4_commander(
 # -------------------------------------------------------------
 @auth_router.post("/auth/login")
 @auth_router.post("/api/auth/login")
+@auth_router.post("/api/login")
+@auth_router.post("/login")
 async def login(req: LoginRequest, request: Request, response: Response):
     """
     Authenticates military credentials, logs audit event, and sets HTTP-only session cookie.
@@ -131,7 +133,7 @@ async def login(req: LoginRequest, request: Request, response: Response):
         )
         raise HTTPException(
             status_code=401,
-            detail="AUTHENTICATION FAILED — INVALID CREDENTIALS"
+            detail="Invalid admin credentials"
         )
 
     token = create_session_token(officer, remember=req.remember_me)
@@ -160,12 +162,15 @@ async def login(req: LoginRequest, request: Request, response: Response):
         "status": "AUTHENTICATED",
         "message": f"Welcome, {officer['full_name']}. Terminal session established.",
         "officer": officer,
-        "token": token
+        "token": token,
+        "redirect": "/dashboard"
     }
 
 
 @auth_router.post("/auth/logout")
 @auth_router.post("/api/auth/logout")
+@auth_router.post("/api/logout")
+@auth_router.post("/logout")
 async def logout(
     request: Request,
     response: Response,
@@ -182,11 +187,13 @@ async def logout(
         )
 
     response.delete_cookie(key=SESSION_COOKIE_NAME)
-    return {"status": "LOGGED_OUT", "message": "Terminal session terminated."}
+    return {"status": "LOGGED_OUT", "message": "Terminal session terminated.", "redirect": "/login"}
 
 
 @auth_router.get("/auth/me")
 @auth_router.get("/api/auth/me")
+@auth_router.get("/api/me")
+@auth_router.get("/me")
 async def get_current_officer_profile(
     officer: Dict[str, Any] = Depends(require_authenticated_officer)
 ):

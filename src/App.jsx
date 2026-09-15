@@ -82,17 +82,25 @@ export default function App() {
     return () => clearInterval(pulseInterval);
   }, []);
 
-  // Route synchronization: ensure unauthenticated access is redirected to /login
+  // Route synchronization: ensure unauthenticated access is redirected to /login,
+  // and authenticated users visiting /login are redirected to /dashboard (Step 12)
   useEffect(() => {
-    if (!isAuthenticated) {
-      if (window.location.pathname !== '/login') {
-        window.history.replaceState(null, '', '/login');
+    const syncRoute = () => {
+      const path = window.location.pathname;
+      if (!isAuthenticated) {
+        if (path !== '/login') {
+          window.history.replaceState(null, '', '/login');
+        }
+      } else {
+        if (path === '/login') {
+          window.history.replaceState(null, '', '/dashboard');
+        }
       }
-    } else {
-      if (window.location.pathname === '/login') {
-        window.history.replaceState(null, '', '/');
-      }
-    }
+    };
+
+    syncRoute();
+    window.addEventListener('popstate', syncRoute);
+    return () => window.removeEventListener('popstate', syncRoute);
   }, [isAuthenticated]);
 
   // Handler: Receive live AI telemetry from LiveSurveillanceGrid (via WebSocket)
@@ -129,20 +137,18 @@ export default function App() {
     }
   };
 
-  // Handler: Login Success
+  // Handler: Login Success (Step 11 & 12)
   const handleLoginSuccess = () => {
     sessionStorage.setItem('isAdmin', 'true');
     setIsAuthenticated(true);
-    if (window.location.pathname === '/login') {
-      window.history.pushState(null, '', '/');
-    }
+    window.history.pushState(null, '', '/dashboard');
     soundManager.playRadarPing();
   };
 
-  // Handler: Logout
+  // Handler: Logout (Step 13)
   const handleLogout = async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' });
+      await fetch('/api/logout', { method: 'POST' });
     } catch (e) {
       // Backend offline or error, proceed with local logout
     }

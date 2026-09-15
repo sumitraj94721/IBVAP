@@ -86,6 +86,16 @@ def init_db():
     # Seed required officer accounts if missing
     seed_operators = [
         {
+            "user_id": "admin",
+            "password": "admin123",
+            "full_name": "Insp. Vikram Singh",
+            "rank": "Sector Commander",
+            "clearance_level": 4,
+            "avatar_url": "tactical_commander_crest",
+            "active_shift": "06:00 - 18:00 (Alpha Day Watch)",
+            "assigned_sector": "Sector Alpha - Post 04"
+        },
+        {
             "user_id": "HQ-CDR-01",
             "password": "Commander@2026",
             "full_name": "Brig. Ajay Verma",

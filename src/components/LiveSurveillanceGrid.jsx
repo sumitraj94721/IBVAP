@@ -180,6 +180,13 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState('');
   const [maximizedCam, setMaximizedCam] = useState(null);
+  const [cam2Status, setCam2Status] = useState({
+    connected: false,
+    stream_status: 'OFFLINE',
+    fps: 0,
+    resolution: null,
+    latency_ms: null,
+  });
 
   // Per-camera vision mode state (independent)
   const [visionModes, setVisionModes] = useState({
@@ -251,6 +258,26 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
   const streamRef = useRef(null);
   const visionModesRef = useRef(visionModes);
   const frameCounterRef = useRef(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refreshCam2Status = async () => {
+      try {
+        const response = await fetch('/api/cameras/cam2/status');
+        const status = await response.json();
+        if (!cancelled) setCam2Status(status);
+      } catch (_) {
+        if (!cancelled) setCam2Status((previous) => ({ ...previous, connected: false, stream_status: 'OFFLINE' }));
+      }
+    };
+
+    refreshCam2Status();
+    const statusInterval = setInterval(refreshCam2Status, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(statusInterval);
+    };
+  }, []);
 
   // Keep ref in sync so animation loops see latest mode without stale closure
   useEffect(() => { visionModesRef.current = visionModes; }, [visionModes]);
@@ -1045,61 +1072,6 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
         drawBorderOverlays(ctx, w, h, 'CAM-01', m1);
       }
 
-      // CAM-02: GEN-III PHOSPHOR NIGHT VISION (Sector Bravo)
-      const c2 = canvasRefs['CAM-02'].current;
-      if (c2) {
-        const ctx = c2.getContext('2d', { willReadFrequently: true });
-        const w = (c2.width = 480);
-        const h = (c2.height = 270);
-
-        ctx.fillStyle = '#031408';
-        ctx.fillRect(0, 0, w, h);
-
-        for (let i = 0; i < 180; i++) {
-          const rx = Math.random() * w;
-          const ry = Math.random() * h;
-          ctx.fillStyle = Math.random() > 0.5 ? 'rgba(0, 255, 120, 0.12)' : 'rgba(0, 50, 20, 0.2)';
-          ctx.fillRect(rx, ry, 2, 2);
-        }
-
-        ctx.strokeStyle = '#10b981';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        for (let x = 0; x < w; x += 15) {
-          ctx.moveTo(x, h * 0.75);
-          ctx.lineTo(x + 10, h * 0.75 + Math.sin(x + frameCount * 0.05) * 5);
-        }
-        ctx.stroke();
-
-        const pX = 260 + Math.sin(time * 0.6) * 90;
-        const pY = 140;
-        ctx.fillStyle = 'rgba(0, 255, 120, 0.35)';
-        ctx.beginPath();
-        ctx.arc(pX, pY - 20, 10, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillRect(pX - 12, pY - 8, 24, 45);
-
-        ctx.strokeStyle = '#fbbf24';
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(pX - 22, pY - 35, 44, 75);
-
-        ctx.fillStyle = 'rgba(0, 20, 10, 0.85)';
-        ctx.fillRect(pX - 22, pY - 50, 130, 14);
-        ctx.fillStyle = '#fbbf24';
-        ctx.font = 'bold 9px "JetBrains Mono", monospace';
-        ctx.fillText('SUSPICIOUS MOVEMENT [86%]', pX - 20, pY - 40);
-
-        const m2 = visionModesRef.current['CAM-02'] || 'NIGHT';
-        if (m2 !== 'NIGHT') {
-          try {
-            const imgData = ctx.getImageData(0, 0, w, h);
-            applyVisionFilter(imgData, m2);
-            ctx.putImageData(imgData, 0, 0);
-          } catch (_) {}
-        }
-        drawBorderOverlays(ctx, w, h, 'CAM-02', m2);
-      }
-
       // CAM-03: FLIR THERMAL IR SENSOR (Sector Charlie)
       const c3 = canvasRefs['CAM-03'].current;
       if (c3) {
@@ -1289,6 +1261,9 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
           const isAlerting = alerts.some((a) => a.camera === cam.id && a.severity === 'CRITICAL');
           const camMode = visionModes[cam.id] || 'DAY';
           const envStatus = getEnvStatus(cam.id, camMode);
+          const displayedResolution = cam.id === 'CAM-02'
+            ? (cam2Status.resolution || '--')
+            : cam.resolution;
 
           return (
             <div key={cam.id} className={`cctv-panel ${isAlerting ? 'panel-alert' : ''}`}>
@@ -1452,6 +1427,25 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
                       }}
                     />
                   </div>
+                ) : cam.id === 'CAM-02' ? (
+                  <div style={{ position: 'relative', width: '100%', height: '100%', background: '#050b12' }}>
+                    {cam2Status.connected ? (
+                      <img
+                        src="/video_feed/cam2"
+                        alt="CAM-02 remote edge camera live stream"
+                        className="feed-canvas"
+                        style={{ objectFit: 'cover' }}
+                        onError={() => setCam2Status((previous) => ({ ...previous, connected: false, stream_status: 'OFFLINE' }))}
+                      />
+                    ) : (
+                      <div style={{ display: 'grid', placeItems: 'center', height: '100%', color: '#ef4444', fontFamily: 'var(--font-ui)', letterSpacing: 1 }}>
+                        <div style={{ textAlign: 'center' }}>
+                          <strong style={{ display: 'block', fontSize: 18 }}>CAM-02</strong>
+                          <span style={{ display: 'block', marginTop: 8, fontSize: 12 }}>REMOTE CAMERA OFFLINE</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   <canvas ref={canvasRefs[cam.id]} className="feed-canvas" />
                 )}
@@ -1466,7 +1460,7 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
 
               <div className="panel-hud-footer">
                 <div className="footer-meta-left">
-                  <span>RES: <strong>{isCam1 && isCameraActive ? '1280x720 (RAW)' : cam.resolution}</strong></span>
+                  <span>RES: <strong>{isCam1 && isCameraActive ? '1280x720 (RAW)' : displayedResolution}</strong></span>
                   <span style={{ marginLeft: 8 }}>
                     MODE: <strong style={{ color: 'var(--cyan-glow)' }}>{camMode}</strong>
                   </span>
@@ -1492,6 +1486,16 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
                       </span>
                       <span style={{ marginLeft: 8, fontSize: 9, color: 'var(--text-dim)' }}>
                         AI: <strong style={{ color: 'var(--status-green)' }}>ONLINE</strong>
+                      </span>
+                    </>
+                  ) : cam.id === 'CAM-02' ? (
+                    <>
+                      <span className="fps-tag">{cam2Status.connected ? `${cam2Status.fps || 0} FPS` : '0 FPS'}</span>
+                      <span className="status-tag" style={{ marginLeft: 8, color: cam2Status.connected ? 'var(--status-green)' : '#ef4444' }}>
+                        {cam2Status.connected ? '● LIVE' : '○ OFFLINE'}
+                      </span>
+                      <span style={{ marginLeft: 8, fontSize: 9, color: 'var(--text-dim)' }}>
+                        LAT: <strong>{cam2Status.latency_ms != null ? `${Math.round(cam2Status.latency_ms)}ms` : '--'}</strong>
                       </span>
                     </>
                   ) : (
