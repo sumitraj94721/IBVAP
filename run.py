@@ -11,6 +11,12 @@ import threading
 import urllib.request
 import uvicorn
 
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 BANNER = r"""
 =============================================================================
   ██████╗  ██████╗ ██████╗ ██████╗ ███████╗██████╗    ███████╗██╗██╗  ██╗
@@ -52,25 +58,13 @@ def ensure_models():
             print(f"[+] Model verified: {model_path} ({os.path.getsize(model_path)} bytes)")
 
 
-def open_browser():
-    time.sleep(1.5)
-    url = "http://127.0.0.1:8000"
-    print(f"[*] Launching CCTV Command Center in default browser: {url}")
-    try:
-        webbrowser.open(url)
-    except Exception as e:
-        print(f"[!] Please open your browser manually at: {url}")
-
-
 def main():
     print(BANNER)
     ensure_models()
-    print("\n[*] Initializing FastAPI ASGI Application on http://127.0.0.1:8000 ...")
+    print("\n[*] Initializing FastAPI AI & Camera Processing Backend on http://127.0.0.1:8000 ...")
+    print("[*] React Command Center Dashboard is served on http://localhost:5173\n")
 
-    # Start browser opener in separate thread
-    threading.Thread(target=open_browser, daemon=True).start()
-
-    # Launch Uvicorn server
+    # Launch Uvicorn server (no automatic browser window opened)
     uvicorn.run(
         "backend.app:app",
         host="0.0.0.0",
@@ -82,3 +76,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

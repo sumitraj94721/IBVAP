@@ -7,14 +7,49 @@ export default function AdminLogin({ onLoginSuccess }) {
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setIsLoading(true);
     setErrorMessage('');
 
-    setTimeout(() => {
-      // Validate credentials strictly as requested:
-      // username === "admin" && password === "admin123"
+    try {
+      // Attempt backend authentication via FastAPI
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: username.trim(),
+          password: password,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        sessionStorage.setItem('isAdmin', 'true');
+        sessionStorage.setItem(
+          'ibvap_auth_user',
+          JSON.stringify(data.officer || {
+            username: 'admin',
+            role: 'SECTOR_COMMANDER',
+            clearance: 'LEVEL_4',
+            name: 'Insp. Vikram Singh',
+            badge: 'BSF-8841',
+            loginTime: new Date().toISOString(),
+          })
+        );
+        if (data.token) {
+          sessionStorage.setItem('ibvap_token', data.token);
+        }
+        setIsLoading(false);
+        onLoginSuccess();
+        return;
+      } else {
+        setIsLoading(false);
+        setErrorMessage('Invalid admin credentials');
+        return;
+      }
+    } catch (err) {
+      // Graceful fallback to demo credentials if backend service is offline
       if (username.trim() === 'admin' && password === 'admin123') {
         sessionStorage.setItem('isAdmin', 'true');
         sessionStorage.setItem(
@@ -30,11 +65,13 @@ export default function AdminLogin({ onLoginSuccess }) {
         );
         setIsLoading(false);
         onLoginSuccess();
+        return;
       } else {
         setIsLoading(false);
         setErrorMessage('Invalid admin credentials');
+        return;
       }
-    }, 350);
+    }
   };
 
   return (

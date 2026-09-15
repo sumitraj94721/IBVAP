@@ -102,9 +102,15 @@ export default function App() {
   };
 
   // Handler: Logout
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch (e) {
+      // Backend offline or error, proceed with local logout
+    }
     sessionStorage.removeItem('isAdmin');
     sessionStorage.removeItem('ibvap_auth_user');
+    sessionStorage.removeItem('ibvap_token');
     setIsAuthenticated(false);
     window.history.pushState(null, '', '/login');
     soundManager.stopSiren();

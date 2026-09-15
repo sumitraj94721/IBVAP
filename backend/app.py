@@ -22,6 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.face_pipeline import SurveillanceVisionPipeline
 from backend.camera_streamer import OpenCVCameraStreamer
 from backend.storage_sync import StorageSyncManager
+from backend.auth_router import auth_router
 
 # Setup structured logging
 logging.basicConfig(
@@ -52,25 +53,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include Authentication & Tactical Incident Router
+app.include_router(auth_router)
+
 # Global Vision Pipeline
 pipeline = SurveillanceVisionPipeline(engine="yunet")
 storage = StorageSyncManager(project_root=PROJECT_ROOT)
 backend_camera: Optional[OpenCVCameraStreamer] = None
 last_event_at: Dict[str, float] = {}
 
-# Mount static frontend directories
-if os.path.exists(FRONTEND_DIR):
+# Mount snapshots directory
+if os.path.exists(SNAPSHOT_DIR):
     app.mount("/static/snapshots", StaticFiles(directory=SNAPSHOT_DIR), name="snapshots")
-    app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 
-@app.get("/", response_class=FileResponse)
+@app.get("/")
 async def serve_index():
-    """Serves the main CCTV Command Center dashboard."""
-    index_path = os.path.join(FRONTEND_DIR, "index.html")
-    if os.path.exists(index_path):
-        return FileResponse(index_path)
-    return HTMLResponse("<h1>AI Border Surveillance CCTV: frontend/index.html not found</h1>", status_code=404)
+    """Backend status endpoint. (User-facing UI is served via React at http://localhost:5173)."""
+    return {
+        "service": "IBVAP Backend / AI Processing Engine",
+        "status": "OPERATIONAL",
+        "engine": pipeline.detector.engine,
+        "frontend": "http://localhost:5173",
+        "sih_code": "SIH 26187",
+        "timestamp": time.time()
+    }
+
 
 
 @app.get("/api/status")

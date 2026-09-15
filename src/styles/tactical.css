@@ -1105,10 +1105,6 @@ body {
   padding-top: 10px;
   margin-top: 4px;
 }
-  margin-top: 6px;
-  font-family: var(--font-ui);
-  font-weight: 600;
-}
 
 .login-hint-box {
   background: rgba(0, 240, 255, 0.08);
