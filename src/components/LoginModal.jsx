@@ -39,8 +39,8 @@ export default function LoginModal({ onLoginSuccess }) {
             <span className="blink-dot"></span>
             <span>RESTRICTED ACCESS // DEFENSE TERMINAL</span>
           </div>
-          <h2>IBVAP</h2>
-          <p>INTELLIGENT BORDER VIDEO ANALYTICS PLATFORM</p>
+          <h2>RAKSHAN</h2>
+          <p>AI BORDER SURVEILLANCE COMMAND CENTER</p>
           <div className="defense-terminal-tag">SECURITY CLEARANCE AUTHENTICATION GATEWAY</div>
         </div>
 

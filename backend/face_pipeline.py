@@ -12,6 +12,15 @@ from typing import List, Dict, Any, Tuple, Optional
 from collections import OrderedDict
 from backend.emotion_pipeline import EmotionClassifier
 from backend.anpr_face import ANPRFaceProcessor
+from backend.ai.zone_analyzer import ZoneAnalyzer
+
+# Object detector loaded separately (optional — degrades gracefully)
+try:
+    from backend.ai.object_detector import ObjectDetector
+    _OD_AVAILABLE = True
+except ImportError:
+    _OD_AVAILABLE = False
+    logger.warning("[!] ObjectDetector not importable — object detection OFFLINE.")
 
 logger = logging.getLogger("IBVAP.FacePipeline")
 
@@ -260,7 +269,21 @@ class SurveillanceVisionPipeline:
         self.tracker = FaceTracker()
         self.emotion_classifier = EmotionClassifier()
         self.edge_processor = ANPRFaceProcessor()
+        self.zone_analyzer = ZoneAnalyzer()
         self.analytics_enabled = True
+        self._frame_count = 0
+        self._last_object_detections: List[Dict[str, Any]] = []
+
+        # Load object detector — non-blocking, degrades gracefully
+        self.object_detector = None
+        if _OD_AVAILABLE:
+            try:
+                self.object_detector = ObjectDetector()
+                logger.info(f"[+] Object detector status: {self.object_detector.status()}")
+            except Exception as e:
+                logger.warning(f"[!] Object detector init failed: {e}")
+        else:
+            logger.warning("[!] Object detection module unavailable.")
 
     def process_frame(
         self,
@@ -270,17 +293,13 @@ class SurveillanceVisionPipeline:
         vehicle_detections: Optional[List[Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
-        End-to-end frame analysis.
-        
-        Returns:
-            Dict containing:
-                - targets: list of tracked faces with bounding boxes & emotions
-                - frame_size: {"width": w, "height": h}
-                - alerts: list of detected threats/anomalies (Angry, Fear)
-                - total_faces: int
-                - high_threat_count: int
+        End-to-end frame analysis (enhanced with object detection, zone analysis, tracking).
+
+        Returns enriched dict with targets, alerts, object detections, zone events, and AI stats.
         """
         h, w = frame_bgr.shape[:2]
+        self._frame_count += 1
+
         if engine and engine != self.detector.engine:
             self.detector.set_engine(engine)
 
@@ -294,10 +313,13 @@ class SurveillanceVisionPipeline:
                 "total_faces": 0,
                 "high_threat_count": 0,
                 "faces": [],
-                "vehicles": []
+                "vehicles": [],
+                "objects": [],
+                "zone_events": [],
+                "ai_stats": {"object_detector": "DISABLED"},
             }
 
-        # 1. Face Detection
+        # ── 1. Face Detection ──────────────────────────────────────────────
         raw_detections = self.detector.detect(frame_bgr)
         rects = [d["box"] for d in raw_detections]
         edge_result = self.edge_processor.process(
@@ -309,36 +331,44 @@ class SurveillanceVisionPipeline:
             ],
         )
 
-        # 2. Tracking: associate with persistent Target IDs
+        # ── 2. Object Detection (every 3rd frame for CPU performance) ──────
+        if self._frame_count % 3 == 0 and self.object_detector and self.object_detector.is_ready:
+            try:
+                all_obj = self.object_detector.detect(frame_bgr, confidence_threshold=0.45)
+                self._last_object_detections = all_obj
+            except Exception as e:
+                logger.debug(f"Object detection frame error: {e}")
+
+        all_objects = self._last_object_detections
+        # Separate persons detected by object detector vs faces
+        od_persons = [o for o in all_objects if o["category"] == "person"]
+        od_vehicles = [o for o in all_objects if o["category"] == "vehicle"]
+        od_objects = [o for o in all_objects if o["category"] == "object"]
+
+        # ── 3. Tracking: Face detections with persistent Target IDs ────────
         rect_to_id = self.tracker.update(rects)
 
         targets = []
         alerts = []
         high_threat_count = 0
 
-        # 3. Emotion Analysis for each tracked face
+        # ── 4. Emotion + Age-group for each tracked face ───────────────────
         for idx, det in enumerate(raw_detections):
             box = det["box"]
             target_id = rect_to_id.get(idx, f"LOC_#{idx+1:02d}")
             x, y, bw, bh = box
 
-            # Crop face with margin padding for accurate expression detection
+            # Crop face with margin padding for expression detection
             pad_x = int(bw * 0.08)
             pad_y = int(bh * 0.08)
             x1 = max(0, x - pad_x)
             y1 = max(0, y - pad_y)
             x2 = min(w, x + bw + pad_x)
             y2 = min(h, y + bh + pad_y)
-
             face_roi = frame_bgr[y1:y2, x1:x2]
 
-            # Analyze emotion
+            # Emotion analysis
             emotion_res = self.emotion_classifier.analyze(face_roi)
-
-            # Check if primary expression confidence meets threshold
-            if emotion_res["confidence"] < (confidence_threshold * 100):
-                # If primary is low confidence, keep detection but mark low confidence
-                pass
 
             threat_profile = emotion_res["threat_profile"]
             if threat_profile["is_threat"]:
@@ -351,6 +381,16 @@ class SurveillanceVisionPipeline:
                     "level": threat_profile["level"]
                 })
 
+            # Age-group heuristic: face bounding box height as proxy
+            # Small face = further away or child; large = adult close-up
+            age_group, age_confidence = _estimate_age_group(bh, bw)
+
+            # Object-in-hand: spatial overlap of objects with lower 40% of face bbox body region
+            # We use the face box lower extent to estimate body lower-arm position
+            body_lower_y = y + bh  # Bottom of face
+            body_lower_region = [x - bw, body_lower_y, bw * 3, bh * 2]
+            objects_in_hand = _find_objects_in_hand(od_objects + od_vehicles, body_lower_region, w, h)
+
             targets.append({
                 "target_id": target_id,
                 "box": box,
@@ -362,19 +402,145 @@ class SurveillanceVisionPipeline:
                 ],
                 "landmarks": det["landmarks"],
                 "detection_confidence": det["confidence"],
-                "emotion": emotion_res
+                "emotion": emotion_res,
+                "age_group": age_group,
+                "age_confidence": age_confidence,
+                "objects_in_hand": objects_in_hand,
+                "target_type": "person",
             })
+
+        # ── 5. Zone Analysis ───────────────────────────────────────────────
+        enriched_targets = self.zone_analyzer.analyze(targets, w, h)
+
+        # ── 6. Build AI stats payload ──────────────────────────────────────
+        od_status = "OFFLINE"
+        od_model = "N/A"
+        if self.object_detector:
+            od_status = self.object_detector.status()
+            od_model = self.object_detector.model_name
+
+        ai_stats = {
+            "object_detector": od_status,
+            "object_detector_model": od_model,
+            "persons_detected": len(enriched_targets),
+            "od_persons": len(od_persons),
+            "vehicles_detected": len(edge_result["vehicles"]) + len(od_vehicles),
+            "objects_detected": len(od_objects),
+        }
 
         for face in edge_result["faces"]:
             face["tag"] = f"FACE DETECTED (CONF: {face.get('confidence', 92):.0f}%)"
         self.edge_processor.annotate(frame_bgr, edge_result)
 
+        # Merge OD vehicles with edge-detected vehicles
+        all_vehicles = edge_result["vehicles"] + [
+            {
+                "box": v["box"],
+                "object_type": v["class_name"].upper(),
+                "confidence": v["confidence"],
+                "plate": "N/A",
+                "simulated": False,
+                "hud": f"[VEHICLE: {v['class_name'].upper()} | CONF: {v['confidence']:.0f}%]",
+                "source": "object_detector",
+            }
+            for v in od_vehicles
+        ]
+
         return {
-            "targets": targets,
+            "targets": enriched_targets,
             "frame_size": {"width": w, "height": h},
             "alerts": alerts,
-            "total_faces": len(targets),
+            "total_faces": len(enriched_targets),
             "high_threat_count": high_threat_count,
             "faces": edge_result["faces"],
-            "vehicles": edge_result["vehicles"]
+            "vehicles": all_vehicles,
+            "objects": od_objects + od_persons,  # all object detections
+            "od_persons": od_persons,
+            "od_vehicles": od_vehicles,
+            "od_objects": od_objects,
+            "ai_stats": ai_stats,
         }
+
+
+# ─── Age Group Heuristic ──────────────────────────────────────────────────────
+
+def _estimate_age_group(face_height: int, face_width: int) -> tuple:
+    """
+    Heuristic age-group estimation based on face bounding box dimensions.
+    This is NOT a trained model — it is labeled clearly as ESTIMATED.
+    Only used when a proper age model is unavailable.
+
+    Returns (age_group: str, confidence: float)
+    """
+    # Face height > 100px at typical webcam distance suggests adult close-up
+    # Face height < 50px could be child OR distant adult — mark as UNKNOWN
+    if face_height < 30 or face_width < 25:
+        return "UNKNOWN", 0.0
+    elif face_height < 55:
+        # Small face — too far or possibly young
+        return "UNKNOWN", 30.0
+    elif face_height < 90:
+        # Medium face — likely teen or adult
+        return "ADULT", 55.0
+    else:
+        # Large face close-up — adult
+        return "ADULT", 65.0
+
+
+# ─── Object-in-Hand Spatial Association ──────────────────────────────────────
+
+def _bbox_overlap_fraction(box_a: List[int], box_b: List[int]) -> float:
+    """
+    Returns fraction of box_b that overlaps with box_a.
+    Boxes are [x, y, w, h] pixel format.
+    """
+    ax, ay, aw, ah = box_a
+    bx, by, bw, bh = box_b
+
+    ix1 = max(ax, bx)
+    iy1 = max(ay, by)
+    ix2 = min(ax + aw, bx + bw)
+    iy2 = min(ay + ah, by + bh)
+
+    if ix2 <= ix1 or iy2 <= iy1:
+        return 0.0
+
+    intersection = (ix2 - ix1) * (iy2 - iy1)
+    area_b = bw * bh
+    return intersection / max(area_b, 1)
+
+
+def _find_objects_in_hand(
+    obj_detections: List[Dict[str, Any]],
+    body_lower_region: List[float],
+    frame_w: int,
+    frame_h: int,
+) -> List[Dict[str, Any]]:
+    """
+    Find objects that overlap with the lower body region of a person.
+    This is spatial proximity — not a trained hand-object detector.
+    Labeled as "LIKELY IN HAND" to avoid false certainty.
+    """
+    in_hand = []
+    region = [
+        max(0, int(body_lower_region[0])),
+        max(0, int(body_lower_region[1])),
+        min(frame_w, int(body_lower_region[2])),
+        min(frame_h, int(body_lower_region[3])),
+    ]
+
+    for obj in obj_detections:
+        obj_box = obj.get("box", [])
+        if len(obj_box) < 4:
+            continue
+        overlap = _bbox_overlap_fraction(region, obj_box)
+        if overlap > 0.25:  # At least 25% of object is in hand region
+            in_hand.append({
+                "class_name": obj.get("class_name", "object"),
+                "confidence": obj.get("confidence", 0),
+                "relation": "LIKELY_IN_HAND",
+                "overlap_fraction": round(overlap, 2),
+            })
+
+    return in_hand
+

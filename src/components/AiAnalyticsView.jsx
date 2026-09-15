@@ -1,11 +1,68 @@
 import React from 'react';
 import { ANALYTICS_SUMMARY } from '../data/mockData';
 
-export default function AiAnalyticsView({ threatLevel, kpiData }) {
+export default function AiAnalyticsView({ threatLevel, kpiData, aiTelemetry }) {
   const stats = ANALYTICS_SUMMARY;
+
+  // Live metrics from WebSocket (fall back to mock if not yet received)
+  const live = aiTelemetry?.aiStats || {};
+  const livePersons = aiTelemetry?.totalFaces ?? null;
+  const liveVehicles = aiTelemetry ? (aiTelemetry.vehicles?.length || 0) : null;
+  const liveObjects = aiTelemetry?.objects?.length ?? null;
+  const liveLatency = aiTelemetry?.latencyMs ?? null;
+  const liveThreat = aiTelemetry?.threatScore ?? null;
+  const liveZone = aiTelemetry?.zoneIntrusions ?? null;
+  const liveLoitering = aiTelemetry?.loiteringCount ?? null;
+  const odStatus = live.object_detector || 'N/A';
+  const odModel = live.object_detector_model || 'MobileNet-SSD';
+  const faceEngine = live.face_engine || 'YuNet';
+  const isLive = !!aiTelemetry;
+
+  const na = (val) => (val === null || val === undefined ? 'N/A' : val);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Live AI Engine Status Panel */}
+      <div style={{
+        background: '#060b18',
+        border: '1px solid var(--border-subtle)',
+        borderRadius: 6,
+        padding: '12px 16px',
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: 20,
+        alignItems: 'center',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'var(--font-ui)' }}>AI ENGINE</span>
+          <span style={{
+            fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-ui)',
+            color: isLive ? 'var(--status-green)' : 'var(--text-dim)'
+          }}>
+            {isLive ? '● ONLINE' : '○ STANDBY'}
+          </span>
+        </div>
+        {[
+          { label: 'PERSONS', value: na(livePersons) },
+          { label: 'VEHICLES', value: na(liveVehicles) },
+          { label: 'OBJECTS', value: na(liveObjects) },
+          { label: 'ZONE INTRUSIONS', value: na(liveZone) },
+          { label: 'LOITERING', value: na(liveLoitering) },
+          { label: 'THREAT SCORE', value: liveThreat !== null ? `${liveThreat}/100` : 'N/A' },
+          { label: 'LATENCY', value: liveLatency !== null ? `${liveLatency?.toFixed(0)}ms` : 'N/A' },
+          { label: 'FACE MODEL', value: faceEngine },
+          { label: 'OBJ DETECTOR', value: odStatus, warn: odStatus === 'OFFLINE' },
+        ].map(({ label, value, warn }) => (
+          <div key={label} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <span style={{ fontSize: 9, color: 'var(--text-dim)', fontFamily: 'var(--font-ui)', letterSpacing: 1 }}>{label}</span>
+            <span style={{
+              fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-ui)',
+              color: warn ? 'var(--warning-amber)' : 'var(--cyan-glow)'
+            }}>{value}</span>
+          </div>
+        ))}
+      </div>
+
       {/* Top AI Performance Metric Cards */}
       <div style={{
         display: 'grid',

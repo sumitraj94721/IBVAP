@@ -24,6 +24,14 @@ from backend.camera_streamer import OpenCVCameraStreamer
 from backend.storage_sync import StorageSyncManager
 from backend.auth_router import auth_router
 
+# AI Feature modules (degrade gracefully if unavailable)
+try:
+    from backend.ai.event_engine import EventEngine
+    _event_engine = EventEngine(camera_id="CAM-01")
+except Exception as _ee_err:
+    _event_engine = None
+    logging.getLogger("IBVAP.Backend").warning(f"EventEngine unavailable: {_ee_err}")
+
 # Setup structured logging
 logging.basicConfig(
     level=logging.INFO,
@@ -150,6 +158,49 @@ async def analyze_uploaded_frame(
     return result
 
 
+@app.get("/api/zone/config")
+async def get_zone_config():
+    """Returns current restricted zone configuration."""
+    from backend.ai.zone_analyzer import DEFAULT_ZONE
+    try:
+        zone = pipeline.zone_analyzer.zones[0] if pipeline.zone_analyzer.zones else DEFAULT_ZONE
+        return {"zone": zone, "loitering_threshold": pipeline.zone_analyzer.loitering_threshold}
+    except Exception:
+        return {"zone": DEFAULT_ZONE, "loitering_threshold": 20}
+
+
+@app.post("/api/zone/config")
+async def set_zone_config(payload: Dict[str, Any]):
+    """Update restricted zone and loitering threshold."""
+    try:
+        if "zone" in payload:
+            pipeline.zone_analyzer.set_zone(payload["zone"])
+        if "loitering_threshold" in payload:
+            pipeline.zone_analyzer.set_loitering_threshold(float(payload["loitering_threshold"]))
+        return {"status": "updated", "zone": pipeline.zone_analyzer.zones}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.get("/api/ai/status")
+async def get_ai_status():
+    """Returns status of all AI modules."""
+    od_status = "OFFLINE"
+    od_model = "N/A"
+    if pipeline.object_detector:
+        od_status = pipeline.object_detector.status()
+        od_model = pipeline.object_detector.model_name
+    return {
+        "face_detector": pipeline.detector.engine,
+        "emotion_model": "FER+ ResNet ONNX",
+        "object_detector": od_status,
+        "object_detector_model": od_model,
+        "zone_analyzer": "ONLINE",
+        "event_engine": "ONLINE" if _event_engine else "OFFLINE",
+        "analytics_enabled": pipeline.analytics_enabled,
+    }
+
+
 @app.websocket("/ws/stream")
 async def websocket_video_stream(websocket: WebSocket):
     """
@@ -211,21 +262,59 @@ async def websocket_video_stream(websocket: WebSocket):
                 )
 
                 now = time.time()
+
+                # Smart alerts from EventEngine (debounced)
+                ai_alerts = []
+                ai_events = []
+                session_threat = 0
+                persons_count = analysis.get("total_faces", 0)
+                vehicles_count = len(analysis.get("vehicles", []))
+                objects_count = len(analysis.get("od_objects", []))
+                zone_intrusions = 0
+                loitering_count = 0
+
+                if _event_engine:
+                    try:
+                        ee_result = _event_engine.process(
+                            enriched_targets=analysis.get("targets", []),
+                            object_detections=analysis.get("objects", []),
+                            frame_size=analysis.get("frame_size", {}),
+                        )
+                        ai_alerts = ee_result.get("alerts", [])
+                        ai_events = ee_result.get("events", [])
+                        session_threat = ee_result.get("session_threat_score", 0)
+                        zone_intrusions = ee_result.get("zone_intrusions", 0)
+                        loitering_count = ee_result.get("loitering_count", 0)
+
+                        # Scored targets override the pipeline targets
+                        scored_targets = ee_result.get("targets_scored", analysis.get("targets", []))
+                    except Exception as ee_err:
+                        logger.debug(f"EventEngine process error: {ee_err}")
+                        scored_targets = analysis.get("targets", [])
+                else:
+                    scored_targets = analysis.get("targets", [])
+
+                # Original emotion-based storage events (keep existing behavior)
                 for alert in analysis["alerts"]:
                     event_key = f"{alert['target_id']}:{alert['expression']}"
                     if now - last_event_at.get(event_key, 0) > 5:
                         storage.record_event("CAM-01", "INTRUSION", "PERSON", alert["level"], frame)
                         last_event_at[event_key] = now
                 for vehicle in analysis["vehicles"]:
-                    storage.record_event("CAM-01", "ANPR", vehicle["object_type"], "MEDIUM", frame)
+                    vtype = vehicle.get("object_type", "VEHICLE")
+                    event_key = f"VEHICLE:{vtype}"
+                    if now - last_event_at.get(event_key, 0) > 10:
+                        storage.record_event("CAM-01", "ANPR", vtype, "MEDIUM", frame)
+                        last_event_at[event_key] = now
 
                 latency_ms = round((time.time() - t_recv) * 1000, 2)
 
+                # Extended telemetry payload (backward-compatible: existing fields preserved)
                 response_payload = {
                     "type": "telemetry",
                     "timestamp": time.time(),
                     "latency_ms": latency_ms,
-                    "targets": analysis["targets"],
+                    "targets": scored_targets,
                     "frame_size": analysis["frame_size"],
                     "alerts": analysis["alerts"],
                     "total_faces": analysis["total_faces"],
@@ -233,10 +322,31 @@ async def websocket_video_stream(websocket: WebSocket):
                     "faces": analysis["faces"],
                     "vehicles": analysis["vehicles"],
                     "sync": storage.status(),
-                    "analytics_enabled": pipeline.analytics_enabled
+                    "analytics_enabled": pipeline.analytics_enabled,
+                    # ── NEW AI Fields ──────────────────────────────────────
+                    "objects": analysis.get("od_objects", []),
+                    "od_persons": analysis.get("od_persons", []),
+                    "od_vehicles": analysis.get("od_vehicles", []),
+                    "ai_alerts": ai_alerts,
+                    "ai_events": ai_events,
+                    "threat_score": session_threat,
+                    "zone_intrusions": zone_intrusions,
+                    "loitering_count": loitering_count,
+                    "ai_stats": {
+                        **analysis.get("ai_stats", {}),
+                        "persons_count": persons_count,
+                        "vehicles_count": vehicles_count,
+                        "objects_count": objects_count,
+                        "zone_intrusions": zone_intrusions,
+                        "loitering_count": loitering_count,
+                        "latency_ms": latency_ms,
+                        "face_engine": pipeline.detector.engine,
+                        "emotion_model": "FER+ ResNet ONNX",
+                    },
                 }
 
                 await websocket.send_text(json.dumps(response_payload))
+
 
     except WebSocketDisconnect:
         logger.info("CCTV WebSocket client disconnected.")

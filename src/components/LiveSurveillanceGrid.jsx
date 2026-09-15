@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-export default function LiveSurveillanceGrid({ cameras, alerts }) {
+export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
   // Camera Ingestion & Device State
   const [videoDevices, setVideoDevices] = useState([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
@@ -17,6 +17,16 @@ export default function LiveSurveillanceGrid({ cameras, alerts }) {
     vehicles: [],
     totalFaces: 0,
     highThreats: 0,
+    // New AI fields
+    objects: [],
+    odPersons: [],
+    odVehicles: [],
+    aiAlerts: [],
+    aiEvents: [],
+    threatScore: 0,
+    zoneIntrusions: 0,
+    loiteringCount: 0,
+    aiStats: {},
   });
 
   const videoRef = useRef(null);
@@ -174,14 +184,27 @@ export default function LiveSurveillanceGrid({ cameras, alerts }) {
           try {
             const data = JSON.parse(event.data);
             if (data.type === 'telemetry') {
-              setAiTelemetry({
+              const updated = {
                 latencyMs: data.latency_ms || 0,
                 targets: data.targets || [],
                 faces: data.faces || [],
                 vehicles: data.vehicles || [],
                 totalFaces: data.total_faces || 0,
                 highThreats: data.high_threat_count || 0,
-              });
+                // New AI fields
+                objects: data.objects || [],
+                odPersons: data.od_persons || [],
+                odVehicles: data.od_vehicles || [],
+                aiAlerts: data.ai_alerts || [],
+                aiEvents: data.ai_events || [],
+                threatScore: data.threat_score || 0,
+                zoneIntrusions: data.zone_intrusions || 0,
+                loiteringCount: data.loitering_count || 0,
+                aiStats: data.ai_stats || {},
+              };
+              setAiTelemetry(updated);
+              // Notify parent (App.jsx) with AI data for alerts/analytics
+              if (onAiUpdate) onAiUpdate(updated);
             }
           } catch (e) {
             console.warn('[IBVAP] WS telemetry parse error:', e);
@@ -290,6 +313,19 @@ export default function LiveSurveillanceGrid({ cameras, alerts }) {
   useEffect(() => {
     let animId;
 
+    const renderCornerReticles = (ctx, x, y, w, h, color) => {
+      const cornerLen = Math.min(22, Math.max(8, w * 0.22));
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = 'square';
+      ctx.beginPath();
+      ctx.moveTo(x, y + cornerLen); ctx.lineTo(x, y); ctx.lineTo(x + cornerLen, y);
+      ctx.moveTo(x + w - cornerLen, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + cornerLen);
+      ctx.moveTo(x, y + h - cornerLen); ctx.lineTo(x, y + h); ctx.lineTo(x + cornerLen, y + h);
+      ctx.moveTo(x + w - cornerLen, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y + h - cornerLen);
+      ctx.stroke();
+    };
+
     const renderOverlay = () => {
       const canvas = overlayCanvasRef.current;
       const video = videoRef.current;
@@ -308,7 +344,7 @@ export default function LiveSurveillanceGrid({ cameras, alerts }) {
         const ch = canvas.height;
         ctx.clearRect(0, 0, cw, ch);
 
-        // Draw HUD AI Bounding Boxes from FastAPI
+        // ── PERSON / FACE TARGETS from FastAPI ────────────────────────────
         if (aiTelemetry.targets && aiTelemetry.targets.length > 0) {
           aiTelemetry.targets.forEach((target) => {
             const [nx, ny, nw, nh] = target.normalized_box || [0, 0, 0, 0];
@@ -319,84 +355,107 @@ export default function LiveSurveillanceGrid({ cameras, alerts }) {
 
             const emotion = target.emotion || {};
             const emotionName = emotion.primary_expression || 'Neutral';
-            const conf = emotion.confidence || 0;
+            const conf = target.detection_confidence || emotion.confidence || 0;
             const threatProfile = emotion.threat_profile || {};
             const targetId = target.target_id || 'LOC_#1';
+            const ageGroup = target.age_group || '';
+            const movement = target.movement || '';
+            const direction = target.direction || '';
+            const inZone = target.in_restricted_zone || false;
+            const loitering = target.loitering || false;
+            const dwell = target.dwell_seconds || 0;
+            const objectsInHand = target.objects_in_hand || [];
+            const threat = target.threat || {};
+            const threatScore = threat.score || 0;
 
-            // Theme color by threat status
-            const themeColor =
-              threatProfile.status === 'HOSTILE'
-                ? '#ef4444'
-                : threatProfile.status === 'AGITATED' || threatProfile.status === 'SUSPICIOUS'
-                ? '#fbbf24'
-                : '#10b981';
+            // Color by zone status first, then emotion
+            let themeColor = '#10b981'; // green = nominal
+            if (loitering) themeColor = '#ef4444';       // red = loitering
+            else if (inZone) themeColor = '#fbbf24';     // amber = intrusion
+            else if (threatProfile.status === 'HOSTILE') themeColor = '#ef4444';
+            else if (threatProfile.status === 'AGITATED' || threatProfile.status === 'SUSPICIOUS') themeColor = '#fbbf24';
 
-            // 1. Semi-transparent backdrop
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
-            ctx.fillRect(x, y, w, h);
+            // Intrusion zone flash overlay
+            if (inZone) {
+              ctx.fillStyle = loitering
+                ? 'rgba(239, 68, 68, 0.12)'
+                : 'rgba(251, 191, 36, 0.08)';
+              ctx.fillRect(x, y, w, h);
+            } else {
+              ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+              ctx.fillRect(x, y, w, h);
+            }
 
-            // 2. Corner tech reticles
-            const cornerLen = Math.min(22, Math.max(8, w * 0.22));
-            ctx.strokeStyle = themeColor;
-            ctx.lineWidth = 2.5;
-            ctx.lineCap = 'square';
+            // Corner reticles
+            renderCornerReticles(ctx, x, y, w, h, themeColor);
 
-            // Top-Left
-            ctx.beginPath();
-            ctx.moveTo(x, y + cornerLen);
-            ctx.lineTo(x, y);
-            ctx.lineTo(x + cornerLen, y);
-            ctx.stroke();
-
-            // Top-Right
-            ctx.beginPath();
-            ctx.moveTo(x + w - cornerLen, y);
-            ctx.lineTo(x + w, y);
-            ctx.lineTo(x + w, y + cornerLen);
-            ctx.stroke();
-
-            // Bottom-Left
-            ctx.beginPath();
-            ctx.moveTo(x, y + h - cornerLen);
-            ctx.lineTo(x, y + h);
-            ctx.lineTo(x + cornerLen, y + h);
-            ctx.stroke();
-
-            // Bottom-Right
-            ctx.beginPath();
-            ctx.moveTo(x + w - cornerLen, y + h);
-            ctx.lineTo(x + w, y + h);
-            ctx.lineTo(x + w, y + h - cornerLen);
-            ctx.stroke();
-
-            // 3. Dashed perimeter
+            // Dashed perimeter
             ctx.strokeStyle = themeColor;
             ctx.lineWidth = 1;
             ctx.setLineDash([4, 4]);
             ctx.strokeRect(x, y, w, h);
             ctx.setLineDash([]);
 
-            // 4. Center crosshair
-            const cx = x + w / 2;
-            const cy = y + h / 2;
+            // Center crosshair
+            const cx2 = x + w / 2;
+            const cy2 = y + h / 2;
             ctx.beginPath();
-            ctx.moveTo(cx - 6, cy); ctx.lineTo(cx + 6, cy);
-            ctx.moveTo(cx, cy - 6); ctx.lineTo(cx, cy + 6);
+            ctx.moveTo(cx2 - 6, cy2); ctx.lineTo(cx2 + 6, cy2);
+            ctx.moveTo(cx2, cy2 - 6); ctx.lineTo(cx2, cy2 + 6);
             ctx.stroke();
 
-            // 5. Header AI Tag Badge
-            ctx.fillStyle = 'rgba(4, 7, 14, 0.92)';
-            const tagW = Math.max(140, w);
-            ctx.fillRect(x, Math.max(4, y - 22), tagW, 20);
-            ctx.fillStyle = themeColor;
-            ctx.font = "bold 10px 'JetBrains Mono', monospace";
-            ctx.fillText(
-              `[${targetId}] ${emotionName.toUpperCase()} (${conf.toFixed(0)}%)`,
-              x + 5,
-              Math.max(18, y - 8)
-            );
+            // ── HUD info panel (right of bbox or below) ────────────────
+            const panelX = Math.min(x, cw - 160);
+            const panelY = Math.max(4, y - 4);
+            const lines = [];
 
-            // 6. Facial landmarks (radar points)
+            // Line 1: Target ID + type
+            lines.push({ text: `PERSON ${targetId}`, color: themeColor, bold: true });
+            // Line 2: Emotion / confidence
+            lines.push({ text: `${emotionName.toUpperCase()}  CONF:${conf.toFixed(0)}%`, color: '#e2e8f0' });
+            // Line 3: Age group (heuristic)
+            if (ageGroup && ageGroup !== 'UNKNOWN') {
+              lines.push({ text: `AGE GRP: ${ageGroup} [EST]`, color: '#94a3b8' });
+            }
+            // Line 4: Movement direction
+            if (movement && movement !== 'STATIONARY') {
+              lines.push({ text: `${movement} ▶ ${direction}`, color: '#38bdf8' });
+            }
+            // Line 5: Objects in hand
+            if (objectsInHand.length > 0) {
+              const oname = objectsInHand[0].class_name.toUpperCase();
+              lines.push({ text: `${oname} — LIKELY IN HAND`, color: '#f59e0b' });
+            }
+            // Line 6: Zone alert
+            if (loitering) {
+              lines.push({ text: `⚠ LOITERING ${dwell.toFixed(0)}s`, color: '#ef4444', bold: true });
+            } else if (inZone) {
+              lines.push({ text: `⚠ RESTRICTED ZONE`, color: '#fbbf24', bold: true });
+            }
+            // Line 7: Threat score
+            if (threatScore > 10) {
+              const tLabel = threatScore >= 75 ? 'CRITICAL' : threatScore >= 55 ? 'HIGH' : threatScore >= 30 ? 'MED' : 'LOW';
+              lines.push({ text: `THREAT: ${threatScore} [${tLabel}]`, color: threatScore >= 55 ? '#ef4444' : '#fbbf24' });
+            }
+
+            // Draw panel background
+            const lineH = 13;
+            const panelH = lines.length * lineH + 8;
+            const panelW = 165;
+            ctx.fillStyle = 'rgba(4, 7, 18, 0.88)';
+            ctx.fillRect(panelX, panelY - panelH, panelW, panelH);
+            ctx.strokeStyle = themeColor;
+            ctx.lineWidth = 1;
+            ctx.strokeRect(panelX, panelY - panelH, panelW, panelH);
+
+            // Draw text lines (bottom-up from panelY)
+            lines.reverse().forEach((line, i) => {
+              ctx.fillStyle = line.color || '#e2e8f0';
+              ctx.font = `${line.bold ? 'bold ' : ''}9px 'JetBrains Mono', monospace`;
+              ctx.fillText(line.text, panelX + 5, panelY - 5 - i * lineH);
+            });
+
+            // Facial landmarks
             if (target.landmarks && target.landmarks.length > 0) {
               ctx.fillStyle = '#00f0ff';
               target.landmarks.forEach(([lx, ly]) => {
@@ -409,12 +468,105 @@ export default function LiveSurveillanceGrid({ cameras, alerts }) {
             }
           });
         }
+
+        // ── VEHICLE DETECTIONS (from OD) ─────────────────────────────────
+        if (aiTelemetry.odVehicles && aiTelemetry.odVehicles.length > 0) {
+          aiTelemetry.odVehicles.forEach((veh) => {
+            const [nx, ny, nw, nh] = veh.normalized_box || [0, 0, 0, 0];
+            const x = nx * cw;
+            const y = ny * ch;
+            const w = nw * cw;
+            const h = nh * ch;
+            const vname = (veh.class_name || 'VEHICLE').toUpperCase();
+            const vconf = veh.confidence || 0;
+
+            ctx.fillStyle = 'rgba(0, 210, 255, 0.08)';
+            ctx.fillRect(x, y, w, h);
+            renderCornerReticles(ctx, x, y, w, h, '#00d2ff');
+            ctx.strokeStyle = '#00d2ff';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([6, 3]);
+            ctx.strokeRect(x, y, w, h);
+            ctx.setLineDash([]);
+
+            // Label
+            ctx.fillStyle = 'rgba(4, 7, 18, 0.90)';
+            const lW = 145;
+            ctx.fillRect(x, Math.max(2, y - 20), lW, 18);
+            ctx.strokeStyle = '#00d2ff';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x, Math.max(2, y - 20), lW, 18);
+            ctx.fillStyle = '#00d2ff';
+            ctx.font = "bold 9px 'JetBrains Mono', monospace";
+            ctx.fillText(`VEHICLE: ${vname}  ${vconf.toFixed(0)}%`, x + 5, Math.max(14, y - 7));
+          });
+        }
+
+        // ── OBJECT DETECTIONS ─────────────────────────────────────────────
+        if (aiTelemetry.objects && aiTelemetry.objects.length > 0) {
+          aiTelemetry.objects.forEach((obj) => {
+            if (obj.category === 'person') return; // already shown above
+            const [nx, ny, nw, nh] = obj.normalized_box || [0, 0, 0, 0];
+            const x = nx * cw;
+            const y = ny * ch;
+            const w = nw * cw;
+            const h = nh * ch;
+            const oname = (obj.class_name || 'OBJECT').toUpperCase();
+            const oconf = obj.confidence || 0;
+
+            ctx.strokeStyle = '#a78bfa';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([3, 3]);
+            ctx.strokeRect(x, y, w, h);
+            ctx.setLineDash([]);
+
+            ctx.fillStyle = 'rgba(4, 7, 18, 0.85)';
+            ctx.fillRect(x, Math.max(2, y - 16), 130, 14);
+            ctx.fillStyle = '#a78bfa';
+            ctx.font = "9px 'JetBrains Mono', monospace";
+            ctx.fillText(`OBJ: ${oname}  ${oconf.toFixed(0)}%`, x + 3, Math.max(12, y - 5));
+          });
+        }
+
+        // ── GLOBAL AI THREAT SCORE HUD (top-right corner) ─────────────────
+        const ts = aiTelemetry.threatScore || 0;
+        if (ts > 0) {
+          const tsColor = ts >= 75 ? '#ef4444' : ts >= 55 ? '#fbbf24' : ts >= 30 ? '#38bdf8' : '#10b981';
+          const tsLabel = ts >= 75 ? 'CRITICAL' : ts >= 55 ? 'HIGH' : ts >= 30 ? 'MEDIUM' : 'LOW';
+          ctx.fillStyle = 'rgba(4, 7, 18, 0.90)';
+          ctx.fillRect(cw - 148, 6, 140, 34);
+          ctx.strokeStyle = tsColor;
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(cw - 148, 6, 140, 34);
+          ctx.fillStyle = tsColor;
+          ctx.font = "bold 10px 'JetBrains Mono', monospace";
+          ctx.fillText(`THREAT: ${ts}/100`, cw - 143, 21);
+          ctx.font = "9px 'JetBrains Mono', monospace";
+          ctx.fillText(`[${tsLabel}]  ZONE:${aiTelemetry.zoneIntrusions || 0}`, cw - 143, 34);
+        }
+
+        // ── CAMERA STATUS STRIP (bottom-left) ─────────────────────────────
+        const stats = aiTelemetry.aiStats || {};
+        const odStat = stats.object_detector || 'N/A';
+        const personsN = aiTelemetry.totalFaces || 0;
+        ctx.fillStyle = 'rgba(4, 7, 18, 0.80)';
+        ctx.fillRect(4, ch - 28, 280, 24);
+        ctx.strokeStyle = 'rgba(0, 240, 255, 0.4)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(4, ch - 28, 280, 24);
+        ctx.fillStyle = '#00f0ff';
+        ctx.font = "8px 'JetBrains Mono', monospace";
+        ctx.fillText(
+          `FACE-AI: ${personsN}P  OD:${odStat}  LAT:${aiTelemetry.latencyMs?.toFixed(0)||'?'}ms`,
+          10, ch - 12
+        );
       }
 
       animId = requestAnimationFrame(renderOverlay);
     };
 
     animId = requestAnimationFrame(renderOverlay);
+
     return () => cancelAnimationFrame(animId);
   }, [isCameraActive, aiTelemetry]);
 

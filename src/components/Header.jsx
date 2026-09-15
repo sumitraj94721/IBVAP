@@ -32,7 +32,7 @@ export default function Header({ threatLevel, onLogout, isSirenActive, onToggleS
           <span>SIH 2026</span>
         </div>
         <div className="banner-title-group">
-          <h1>SHOURYA — INTELLIGENT BORDER VIDEO &amp; ASSET PERIMETER (IBVAP)</h1>
+          <h1>RAKSHAN — AI BORDER SURVEILLANCE COMMAND CENTER</h1>
           <div className="sub">COMMAND CENTER DASHBOARD &amp; TACTICAL AI SURVEILLANCE GRID</div>
         </div>
       </div>

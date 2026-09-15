@@ -92,8 +92,8 @@ export default function AdminLogin({ onLoginSuccess }) {
             <span>RESTRICTED ACCESS // DEFENSE TERMINAL</span>
           </div>
 
-          <h1 className="login-title">IBVAP</h1>
-          <p className="login-subtitle">Intelligent Border Video Analytics Platform</p>
+          <h1 className="login-title">RAKSHAN</h1>
+          <p className="login-subtitle">AI Border Surveillance Command Center</p>
           <div className="admin-login-badge">ADMIN LOGIN</div>
         </div>
 

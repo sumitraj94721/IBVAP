@@ -39,6 +39,10 @@ export default function App() {
   const [isMuted, setIsMuted] = useState(false);
   const [isSirenActive, setIsSirenActive] = useState(false);
 
+  // Live AI Telemetry (from LiveSurveillanceGrid via WebSocket)
+  const [aiTelemetry, setAiTelemetry] = useState(null);
+  const lastAiAlertIdsRef = React.useRef(new Set());
+
   // Dynamic KPI Data
   const kpiData = {
     totalCameras: cameras.length,
@@ -90,6 +94,40 @@ export default function App() {
       }
     }
   }, [isAuthenticated]);
+
+  // Handler: Receive live AI telemetry from LiveSurveillanceGrid (via WebSocket)
+  const handleAiUpdate = (telemetry) => {
+    setAiTelemetry(telemetry);
+
+    // Inject new AI alerts into the alerts panel (deduplicate by id)
+    if (telemetry.aiAlerts && telemetry.aiAlerts.length > 0) {
+      setAlerts((prev) => {
+        const existingIds = new Set(prev.map((a) => a.id));
+        const newAlerts = telemetry.aiAlerts.filter(
+          (a) => !existingIds.has(a.id) && !lastAiAlertIdsRef.current.has(a.id)
+        );
+        if (newAlerts.length === 0) return prev;
+        newAlerts.forEach((a) => lastAiAlertIdsRef.current.add(a.id));
+        // Keep only last 50 ids in the ref set to prevent memory leak
+        if (lastAiAlertIdsRef.current.size > 50) {
+          const arr = Array.from(lastAiAlertIdsRef.current);
+          lastAiAlertIdsRef.current = new Set(arr.slice(-40));
+        }
+        // Prepend new AI alerts, keep total manageable
+        return [...newAlerts, ...prev].slice(0, 30);
+      });
+    }
+
+    // Inject new AI events into the timeline
+    if (telemetry.aiEvents && telemetry.aiEvents.length > 0) {
+      setTimeline((prev) => {
+        const existingIds = new Set(prev.map((e) => e.id));
+        const newEvents = telemetry.aiEvents.filter((e) => !existingIds.has(e.id));
+        if (newEvents.length === 0) return prev;
+        return [...newEvents, ...prev].slice(0, 60);
+      });
+    }
+  };
 
   // Handler: Login Success
   const handleLoginSuccess = () => {
@@ -230,7 +268,7 @@ export default function App() {
           {currentTab === 'dashboard' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               {/* Primary 2x2 CCTV Grid */}
-              <LiveSurveillanceGrid cameras={cameras} alerts={alerts} />
+              <LiveSurveillanceGrid cameras={cameras} alerts={alerts} onAiUpdate={handleAiUpdate} />
 
               {/* Tactical Border Map */}
               <TacticalBorderMap alerts={alerts} />
@@ -238,18 +276,18 @@ export default function App() {
               {/* Alerts & Timeline Split */}
               <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 14 }}>
                 <AlertsPanel
-                  alerts={alerts.slice(0, 4)}
+                  alerts={alerts.slice(0, 8)}
                   onAcknowledgeAlert={handleAcknowledgeAlert}
                   onEscalateAlert={handleEscalateAlert}
                 />
-                <EventTimeline timeline={timeline.slice(0, 6)} />
+                <EventTimeline timeline={timeline.slice(0, 8)} />
               </div>
             </div>
           )}
 
           {currentTab === 'surveillance' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <LiveSurveillanceGrid cameras={cameras} alerts={alerts} />
+              <LiveSurveillanceGrid cameras={cameras} alerts={alerts} onAiUpdate={handleAiUpdate} />
               <CameraStatusTable cameras={cameras} />
             </div>
           )}
@@ -270,7 +308,7 @@ export default function App() {
           )}
 
           {currentTab === 'analytics' && (
-            <AiAnalyticsView threatLevel={threatLevel} kpiData={kpiData} />
+            <AiAnalyticsView threatLevel={threatLevel} kpiData={kpiData} aiTelemetry={aiTelemetry} />
           )}
 
           {currentTab === 'cameras' && (

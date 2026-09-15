@@ -1,4 +1,4 @@
-# AI Border Surveillance CCTV Command Center (SIH 26187)
+# RAKSHAN AI Border Surveillance Command Center (SIH 26187)
 
 [![OpenCV](https://img.shields.io/badge/OpenCV-4.13.0-5C3EE8?logo=opencv&logoColor=white)](https://opencv.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.111.0-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -75,7 +75,7 @@ A military-grade, real-time AI Border Surveillance CCTV Command Center prototype
 ## Project Structure
 
 ```
-IBVAP/
+RAKSHAN/
 ├── backend/
 │   ├── __init__.py            # Backend package initialization
 │   ├── app.py                 # FastAPI application, WebSocket & REST endpoints
