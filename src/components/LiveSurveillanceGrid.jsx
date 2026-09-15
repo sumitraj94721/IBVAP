@@ -1,5 +1,178 @@
 import React, { useState, useEffect, useRef } from 'react';
 
+// ─── Vision Mode Definitions ─────────────────────────────────────────────────
+const VISION_MODES = [
+  { id: 'DAY',        label: 'DAY',         icon: '☀' },
+  { id: 'NIGHT',      label: 'NIGHT VISION', icon: '🌙' },
+  { id: 'FOG',        label: 'FOG/DEHAZE',  icon: '🌫' },
+  { id: 'THERMAL',    label: 'THERMAL',     icon: '🌡' },
+  { id: 'RAIN',       label: 'RAIN ENH.',   icon: '🌧' },
+  { id: 'LOWLIGHT',   label: 'LOW LIGHT',   icon: '🔅' },
+  { id: 'MONO',       label: 'MONOCHROME',  icon: '⬜' },
+  { id: 'ENHANCED',   label: 'ENHANCED',    icon: '✦' },
+  { id: 'AIVISION',   label: 'AI VISION',   icon: '⬡' },
+];
+
+/**
+ * Apply a vision mode filter to ImageData in-place.
+ * All operations are pure CPU pixel math — no external deps.
+ * Returns the mutated ImageData.
+ */
+function applyVisionFilter(imageData, mode) {
+  const d = imageData.data;
+  const len = d.length;
+  try {
+    switch (mode) {
+      case 'DAY': break; // no-op
+
+      case 'NIGHT': {
+        // Green phosphor night-vision: desaturate → green tint → boost local brightness
+        for (let i = 0; i < len; i += 4) {
+          const lum = 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2];
+          const boosted = Math.min(255, lum * 1.6 + 20);
+          d[i]   = 0;
+          d[i+1] = Math.min(255, boosted * 1.15);
+          d[i+2] = Math.floor(boosted * 0.15);
+        }
+        break;
+      }
+
+      case 'FOG': {
+        // CLAHE-lite: stretch contrast per channel + mild gamma correction
+        let rMin=255,rMax=0,gMin=255,gMax=0,bMin=255,bMax=0;
+        for (let i = 0; i < len; i += 4) {
+          rMin=Math.min(rMin,d[i]); rMax=Math.max(rMax,d[i]);
+          gMin=Math.min(gMin,d[i+1]); gMax=Math.max(gMax,d[i+1]);
+          bMin=Math.min(bMin,d[i+2]); bMax=Math.max(bMax,d[i+2]);
+        }
+        const rR=Math.max(1,rMax-rMin),gR=Math.max(1,gMax-gMin),bR=Math.max(1,bMax-bMin);
+        for (let i = 0; i < len; i += 4) {
+          d[i]   = Math.min(255, ((d[i]   - rMin) / rR) * 255 * 1.1);
+          d[i+1] = Math.min(255, ((d[i+1] - gMin) / gR) * 255 * 1.1);
+          d[i+2] = Math.min(255, ((d[i+2] - bMin) / bR) * 255 * 1.1);
+        }
+        break;
+      }
+
+      case 'THERMAL': {
+        // Luminance → false-color heatmap (black→blue→red→yellow→white)
+        for (let i = 0; i < len; i += 4) {
+          const lum = (0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2]) / 255;
+          // Map lum to heatmap stops
+          let r,g,b;
+          if (lum < 0.25) {
+            const t = lum / 0.25;
+            r=0; g=0; b=Math.round(128 + t*127);
+          } else if (lum < 0.5) {
+            const t = (lum-0.25)/0.25;
+            r=Math.round(t*220); g=0; b=Math.round(255-t*255);
+          } else if (lum < 0.75) {
+            const t = (lum-0.5)/0.25;
+            r=255; g=Math.round(t*200); b=0;
+          } else {
+            const t = (lum-0.75)/0.25;
+            r=255; g=Math.round(200+t*55); b=Math.round(t*200);
+          }
+          d[i]=r; d[i+1]=g; d[i+2]=b;
+        }
+        break;
+      }
+
+      case 'RAIN': {
+        // Contrast stretch + mild warm-cool correction + sharpen-like local boost
+        for (let i = 0; i < len; i += 4) {
+          d[i]   = Math.min(255, d[i]   * 1.15 + 8);
+          d[i+1] = Math.min(255, d[i+1] * 1.12 + 6);
+          d[i+2] = Math.min(255, d[i+2] * 1.20 + 10);
+        }
+        break;
+      }
+
+      case 'LOWLIGHT': {
+        // Gamma correction (gamma < 1 brightens dark areas) + mild sat boost
+        const gamma = 0.55;
+        for (let i = 0; i < len; i += 4) {
+          d[i]   = Math.min(255, Math.pow(d[i]   / 255, gamma) * 255);
+          d[i+1] = Math.min(255, Math.pow(d[i+1] / 255, gamma) * 255);
+          d[i+2] = Math.min(255, Math.pow(d[i+2] / 255, gamma) * 255);
+        }
+        break;
+      }
+
+      case 'MONO': {
+        for (let i = 0; i < len; i += 4) {
+          const lum = Math.min(255, 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2]);
+          // High-contrast mono with mild sharpening via brightness boost
+          const v = Math.min(255, lum * 1.05 + 5);
+          d[i]=v; d[i+1]=v; d[i+2]=v;
+        }
+        break;
+      }
+
+      case 'ENHANCED': {
+        // CLAHE-lite + sharpening approximation
+        let mn=255,mx=0;
+        for (let i = 0; i < len; i += 4) {
+          const lum = 0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+          mn=Math.min(mn,lum); mx=Math.max(mx,lum);
+        }
+        const range=Math.max(1,mx-mn);
+        for (let i = 0; i < len; i += 4) {
+          d[i]   = Math.min(255, ((d[i]   - mn*0.8) / range) * 255 * 1.08);
+          d[i+1] = Math.min(255, ((d[i+1] - mn*0.8) / range) * 255 * 1.08);
+          d[i+2] = Math.min(255, ((d[i+2] - mn*0.8) / range) * 255 * 1.08);
+        }
+        break;
+      }
+
+      case 'AIVISION': {
+        // AI Vision: slight cold-blue tint + contrast lift to make detections pop
+        for (let i = 0; i < len; i += 4) {
+          d[i]   = Math.min(255, d[i]   * 0.92);
+          d[i+1] = Math.min(255, d[i+1] * 0.97);
+          d[i+2] = Math.min(255, d[i+2] * 1.10 + 8);
+        }
+        break;
+      }
+
+      default: break;
+    }
+  } catch (e) {
+    // Filter failed — silently fall back to original
+  }
+  return imageData;
+}
+
+/** Return a short mode label for the HUD footer strip */
+function modeHudLabel(mode) {
+  const m = {
+    DAY: 'OPTICAL MODE: DAY',
+    NIGHT: 'NIGHT VISION ENHANCED',
+    FOG: 'FOG/DEHAZE ACTIVE',
+    THERMAL: 'THERMAL VISUALIZATION [SIM]',
+    RAIN: 'RAIN ENH. ACTIVE',
+    LOWLIGHT: 'LOW LIGHT ENHANCED',
+    MONO: 'MONOCHROME',
+    ENHANCED: 'ENHANCED VISION',
+    AIVISION: 'AI VISION MODE',
+  };
+  return m[mode] || mode;
+}
+
+function getEnvStatus(camId, mode) {
+  switch (mode) {
+    case 'NIGHT': return { env: 'NIGHT', vis: 'ENHANCED' };
+    case 'FOG': return { env: 'FOG', vis: 'DEHAZE ACTIVE' };
+    case 'THERMAL': return { env: 'THERMAL', vis: 'MWIR [SIM]' };
+    case 'RAIN': return { env: 'RAIN', vis: 'ENHANCED' };
+    case 'LOWLIGHT': return { env: 'LOW LIGHT', vis: 'GAMMA BOOST' };
+    case 'MONO': return { env: 'TACTICAL', vis: 'HIGH CONTRAST' };
+    case 'ENHANCED': return { env: 'OBSCURED', vis: 'CLAHE ACTIVE' };
+    case 'AIVISION': return { env: 'ALL-SPECTRUM', vis: 'AI AUGMENTED' };
+    default: return { env: 'CLEAR', vis: 'NOMINAL' };
+  }
+}
+
 export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
   // Camera Ingestion & Device State
   const [videoDevices, setVideoDevices] = useState([]);
@@ -7,6 +180,46 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState('');
   const [maximizedCam, setMaximizedCam] = useState(null);
+
+  // Per-camera vision mode state (independent)
+  const [visionModes, setVisionModes] = useState({
+    'CAM-01': 'DAY',
+    'CAM-02': 'NIGHT',
+    'CAM-03': 'THERMAL',
+    'CAM-04': 'DAY',
+  });
+
+  // Automatic mode recommendation heuristic
+  const [autoSuggestedMode, setAutoSuggestedMode] = useState(null);
+
+  const setMode = (camId, mode) =>
+    setVisionModes((prev) => ({ ...prev, [camId]: mode }));
+
+  // Preset tactical demo scenarios
+  const applyScenario = (scenarioId) => {
+    switch (scenarioId) {
+      case 'NORMAL_DAY':
+        setVisionModes({ 'CAM-01': 'DAY', 'CAM-02': 'DAY', 'CAM-03': 'DAY', 'CAM-04': 'DAY' });
+        break;
+      case 'NIGHT_PATROL':
+        setVisionModes({ 'CAM-01': 'NIGHT', 'CAM-02': 'NIGHT', 'CAM-03': 'THERMAL', 'CAM-04': 'LOWLIGHT' });
+        break;
+      case 'FOG_OPERATION':
+        setVisionModes({ 'CAM-01': 'FOG', 'CAM-02': 'FOG', 'CAM-03': 'THERMAL', 'CAM-04': 'ENHANCED' });
+        break;
+      case 'THERMAL_SEARCH':
+        setVisionModes({ 'CAM-01': 'THERMAL', 'CAM-02': 'THERMAL', 'CAM-03': 'THERMAL', 'CAM-04': 'NIGHT' });
+        break;
+      case 'LOW_VISIBILITY':
+        setVisionModes({ 'CAM-01': 'ENHANCED', 'CAM-02': 'FOG', 'CAM-03': 'LOWLIGHT', 'CAM-04': 'RAIN' });
+        break;
+      case 'AI_OVERWATCH':
+        setVisionModes({ 'CAM-01': 'AIVISION', 'CAM-02': 'AIVISION', 'CAM-03': 'THERMAL', 'CAM-04': 'AIVISION' });
+        break;
+      default:
+        break;
+    }
+  };
 
   // WebSocket & AI Telemetry State
   const [isWsConnected, setIsWsConnected] = useState(false);
@@ -31,10 +244,16 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
 
   const videoRef = useRef(null);
   const overlayCanvasRef = useRef(null);
+  const filterCanvasRef = useRef(null);   // NEW: CAM-01 vision filter display canvas
   const offscreenCanvasRef = useRef(null);
   const websocketRef = useRef(null);
   const isProcessingFrameRef = useRef(false);
   const streamRef = useRef(null);
+  const visionModesRef = useRef(visionModes);
+  const frameCounterRef = useRef(0);
+
+  // Keep ref in sync so animation loops see latest mode without stale closure
+  useEffect(() => { visionModesRef.current = visionModes; }, [visionModes]);
 
   // References for CAM-02, CAM-03, CAM-04 simulation canvases
   const canvasRefs = {
@@ -43,6 +262,7 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
     'CAM-03': useRef(null),
     'CAM-04': useRef(null),
   };
+
 
   // -----------------------------------------------------------------
   // 1. Enumerate Available Cameras
@@ -289,6 +509,30 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
         ctx.drawImage(video, 0, 0, targetWidth, targetHeight);
         ctx.restore();
 
+        // Sample light & contrast every 25 frames (~1s) for automatic mode recommendation
+        frameCounterRef.current = (frameCounterRef.current || 0) + 1;
+        if (frameCounterRef.current % 25 === 0) {
+          try {
+            const sample = ctx.getImageData(Math.floor(targetWidth / 2 - 10), Math.floor(targetHeight / 2 - 10), 20, 20).data;
+            let sumL = 0, minL = 255, maxL = 0;
+            for (let i = 0; i < sample.length; i += 4) {
+              const lum = 0.299 * sample[i] + 0.587 * sample[i + 1] + 0.114 * sample[i + 2];
+              sumL += lum;
+              if (lum < minL) minL = lum;
+              if (lum > maxL) maxL = lum;
+            }
+            const avgL = sumL / (sample.length / 4);
+            const contrast = maxL - minL;
+            if (avgL < 45) {
+              setAutoSuggestedMode('LOWLIGHT');
+            } else if (contrast < 35 && avgL > 60) {
+              setAutoSuggestedMode('FOG');
+            } else {
+              setAutoSuggestedMode('DAY');
+            }
+          } catch (_) {}
+        }
+
         const jpegData = offCanvas.toDataURL('image/jpeg', 0.65);
 
         ws.send(
@@ -306,6 +550,80 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
 
     return () => clearInterval(frameInterval);
   }, [isCameraActive]);
+
+  // -----------------------------------------------------------------
+  // 4b. CAM-01 Vision Filter Rendering Loop
+  //     Captures video → applies pixel filter → draws to filterCanvasRef
+  //     Runs separately from AI pipeline (AI always gets clean frames)
+  //     Frame rate throttled to ~30 FPS. Falls back to DAY on any error.
+  // -----------------------------------------------------------------
+  useEffect(() => {
+    if (!isCameraActive) return;
+    let animId;
+
+    const renderFilteredFrame = () => {
+      const video = videoRef.current;
+      const canvas = filterCanvasRef.current;
+      const mode = visionModesRef.current['CAM-01'] || 'DAY';
+
+      if (canvas && video && video.videoWidth > 0) {
+        try {
+          const vw = video.clientWidth || video.videoWidth;
+          const vh = video.clientHeight || video.videoHeight;
+
+          if (canvas.width !== vw || canvas.height !== vh) {
+            canvas.width = vw;
+            canvas.height = vh;
+          }
+
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+          if (mode === 'DAY') {
+            // DAY mode: hide filter canvas, native video shows through
+            canvas.style.display = 'none';
+          } else {
+            canvas.style.display = 'block';
+            // Draw mirrored video frame
+            ctx.save();
+            ctx.translate(vw, 0);
+            ctx.scale(-1, 1);
+            ctx.drawImage(video, 0, 0, vw, vh);
+            ctx.restore();
+
+            // Apply vision filter in-place
+            if (vw > 0 && vh > 0) {
+              const imgData = ctx.getImageData(0, 0, vw, vh);
+              applyVisionFilter(imgData, mode);
+              ctx.putImageData(imgData, 0, 0);
+            }
+
+            // Draw mode badge top-left
+            const badge = modeHudLabel(mode);
+            ctx.fillStyle = 'rgba(4, 7, 18, 0.82)';
+            ctx.fillRect(4, 4, 220, 18);
+            ctx.strokeStyle = mode === 'NIGHT' ? '#10b981'
+              : mode === 'THERMAL' ? '#ef4444'
+              : mode === 'FOG' ? '#38bdf8'
+              : '#00f0ff';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(4, 4, 220, 18);
+            ctx.fillStyle = ctx.strokeStyle;
+            ctx.font = "bold 9px 'JetBrains Mono', monospace";
+            ctx.fillText(`◈ ${badge}`, 10, 16);
+          }
+        } catch (err) {
+          // Filter error — hide canvas, native video fallback
+          if (filterCanvasRef.current) filterCanvasRef.current.style.display = 'none';
+        }
+      }
+
+      animId = requestAnimationFrame(renderFilteredFrame);
+    };
+
+    animId = requestAnimationFrame(renderFilteredFrame);
+    return () => cancelAnimationFrame(animId);
+  }, [isCameraActive]);
+
 
   // -----------------------------------------------------------------
   // 5. Render HUD Tactical Overlays on Video Canvas
@@ -560,6 +878,56 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
           `FACE-AI: ${personsN}P  OD:${odStat}  LAT:${aiTelemetry.latencyMs?.toFixed(0)||'?'}ms`,
           10, ch - 12
         );
+
+        // ── TACTICAL BORDER ZERO-LINE BP-44 ───────────────────────────────
+        ctx.save();
+        ctx.strokeStyle = 'rgba(0, 240, 255, 0.35)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([8, 6]);
+        ctx.beginPath();
+        ctx.moveTo(10, ch * 0.82);
+        ctx.lineTo(cw - 10, ch * 0.82);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = 'rgba(0, 240, 255, 0.55)';
+        ctx.font = "8px 'JetBrains Mono', monospace";
+        ctx.fillText("BORDER ZERO-LINE BP-44 // PATROL CORRIDOR ALPHA", 14, ch * 0.82 - 4);
+
+        // ── VIRTUAL RESTRICTED ZONE BOUNDARY (SECTOR ALPHA) ──────────────
+        const zx = 0.30 * cw, zy = 0.20 * ch, zw = 0.50 * cw, zh = 0.65 * ch;
+        ctx.strokeStyle = aiTelemetry.zoneIntrusions > 0 ? 'rgba(239, 68, 68, 0.6)' : 'rgba(251, 191, 36, 0.25)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 4]);
+        ctx.strokeRect(zx, zy, zw, zh);
+        ctx.setLineDash([]);
+        ctx.fillStyle = aiTelemetry.zoneIntrusions > 0 ? 'rgba(239, 68, 68, 0.8)' : 'rgba(251, 191, 36, 0.6)';
+        ctx.font = "8px 'JetBrains Mono', monospace";
+        ctx.fillText("⚑ RESTRICTED ZONE [SECTOR ALPHA]", zx + 6, zy + 12);
+
+        // ── OPTICAL MODE BADGE FOR DAY MODE ──────────────────────────────
+        const cam1Mode = visionModesRef.current['CAM-01'] || 'DAY';
+        if (cam1Mode === 'DAY') {
+          ctx.fillStyle = 'rgba(4, 7, 18, 0.82)';
+          ctx.fillRect(4, 4, 180, 18);
+          ctx.strokeStyle = '#00f0ff';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(4, 4, 180, 18);
+          ctx.fillStyle = '#00f0ff';
+          ctx.font = "bold 9px 'JetBrains Mono', monospace";
+          ctx.fillText("◈ OPTICAL MODE: DAY", 10, 16);
+        }
+
+        // ── ENVIRONMENT & VISIBILITY STATUS (top-center) ──────────────────
+        const env1 = getEnvStatus('CAM-01', cam1Mode);
+        ctx.fillStyle = 'rgba(4, 7, 18, 0.80)';
+        ctx.fillRect(cw / 2 - 80, 4, 160, 18);
+        ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(cw / 2 - 80, 4, 160, 18);
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = "8px 'JetBrains Mono', monospace";
+        ctx.fillText(`ENV: ${env1.env} | VIS: ${env1.vis}`, cw / 2 - 74, 16);
+        ctx.restore();
       }
 
       animId = requestAnimationFrame(renderOverlay);
@@ -577,6 +945,51 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
     let animationFrameId;
     let frameCount = 0;
 
+    const drawBorderOverlays = (ctx, w, h, camId, mode) => {
+      // 1. Virtual Border Line (dashed at lower third)
+      ctx.save();
+      ctx.strokeStyle = 'rgba(0, 240, 255, 0.35)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([8, 6]);
+      ctx.beginPath();
+      ctx.moveTo(10, h * 0.82);
+      ctx.lineTo(w - 10, h * 0.82);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      
+      ctx.fillStyle = 'rgba(0, 240, 255, 0.55)';
+      ctx.font = "8px 'JetBrains Mono', monospace";
+      ctx.fillText(`BORDER LINE BP-44 // ${camId} COVERAGE`, 14, h * 0.82 - 4);
+
+      // 2. Mode HUD Badge (top-left)
+      const badge = modeHudLabel(mode);
+      const isNight = mode === 'NIGHT';
+      const isTherm = mode === 'THERMAL';
+      const isFog = mode === 'FOG';
+      const badgeColor = isNight ? '#10b981' : isTherm ? '#ef4444' : isFog ? '#38bdf8' : '#00f0ff';
+
+      ctx.fillStyle = 'rgba(4, 7, 18, 0.85)';
+      ctx.fillRect(6, 6, 215, 18);
+      ctx.strokeStyle = badgeColor;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(6, 6, 215, 18);
+      ctx.fillStyle = badgeColor;
+      ctx.font = "bold 9px 'JetBrains Mono', monospace";
+      ctx.fillText(`◈ ${badge}`, 10, 18);
+
+      // 3. Environment & Visibility Status (top-right)
+      const env = getEnvStatus(camId, mode);
+      ctx.fillStyle = 'rgba(4, 7, 18, 0.80)';
+      ctx.fillRect(w - 150, 6, 144, 18);
+      ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(w - 150, 6, 144, 18);
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = "8px 'JetBrains Mono', monospace";
+      ctx.fillText(`ENV: ${env.env} | ${env.vis}`, w - 145, 18);
+      ctx.restore();
+    };
+
     const renderSimFeeds = () => {
       frameCount++;
       const time = performance.now() * 0.001;
@@ -584,7 +997,7 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
       // CAM-01 Fallback Simulation (only active if camera is offline)
       const c1 = canvasRefs['CAM-01'].current;
       if (c1 && !isCameraActive) {
-        const ctx = c1.getContext('2d');
+        const ctx = c1.getContext('2d', { willReadFrequently: true });
         const w = (c1.width = 480);
         const h = (c1.height = 270);
 
@@ -620,12 +1033,22 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
         ctx.fillStyle = '#ef4444';
         ctx.font = 'bold 9px "JetBrains Mono", monospace';
         ctx.fillText(`SIM_LOC_#01: PERSON 94%`, targetX - boxW / 2 + 4, targetY - boxH / 2 - 8);
+
+        const m1 = visionModesRef.current['CAM-01'] || 'DAY';
+        if (m1 !== 'DAY') {
+          try {
+            const imgData = ctx.getImageData(0, 0, w, h);
+            applyVisionFilter(imgData, m1);
+            ctx.putImageData(imgData, 0, 0);
+          } catch (_) {}
+        }
+        drawBorderOverlays(ctx, w, h, 'CAM-01', m1);
       }
 
       // CAM-02: GEN-III PHOSPHOR NIGHT VISION (Sector Bravo)
       const c2 = canvasRefs['CAM-02'].current;
       if (c2) {
-        const ctx = c2.getContext('2d');
+        const ctx = c2.getContext('2d', { willReadFrequently: true });
         const w = (c2.width = 480);
         const h = (c2.height = 270);
 
@@ -665,12 +1088,22 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
         ctx.fillStyle = '#fbbf24';
         ctx.font = 'bold 9px "JetBrains Mono", monospace';
         ctx.fillText('SUSPICIOUS MOVEMENT [86%]', pX - 20, pY - 40);
+
+        const m2 = visionModesRef.current['CAM-02'] || 'NIGHT';
+        if (m2 !== 'NIGHT') {
+          try {
+            const imgData = ctx.getImageData(0, 0, w, h);
+            applyVisionFilter(imgData, m2);
+            ctx.putImageData(imgData, 0, 0);
+          } catch (_) {}
+        }
+        drawBorderOverlays(ctx, w, h, 'CAM-02', m2);
       }
 
       // CAM-03: FLIR THERMAL IR SENSOR (Sector Charlie)
       const c3 = canvasRefs['CAM-03'].current;
       if (c3) {
-        const ctx = c3.getContext('2d');
+        const ctx = c3.getContext('2d', { willReadFrequently: true });
         const w = (c3.width = 480);
         const h = (c3.height = 270);
 
@@ -717,12 +1150,22 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
         ctx.fillStyle = '#ff6b6b';
         ctx.font = 'bold 9px "JetBrains Mono", monospace';
         ctx.fillText('INTRUSION ALERT: 38.6°C', heatX - 22, heatY - 30);
+
+        const m3 = visionModesRef.current['CAM-03'] || 'THERMAL';
+        if (m3 !== 'THERMAL') {
+          try {
+            const imgData = ctx.getImageData(0, 0, w, h);
+            applyVisionFilter(imgData, m3);
+            ctx.putImageData(imgData, 0, 0);
+          } catch (_) {}
+        }
+        drawBorderOverlays(ctx, w, h, 'CAM-03', m3);
       }
 
       // CAM-04: ANPR CHECKPOST ALPHA (Sector Delta)
       const c4 = canvasRefs['CAM-04'].current;
       if (c4) {
-        const ctx = c4.getContext('2d');
+        const ctx = c4.getContext('2d', { willReadFrequently: true });
         const w = (c4.width = 480);
         const h = (c4.height = 270);
 
@@ -765,6 +1208,16 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
         ctx.fillStyle = '#00f0ff';
         ctx.font = 'bold 9px "JetBrains Mono", monospace';
         ctx.fillText('ANPR: MATCH [VEHICLE]', vX + 4, vY - 8);
+
+        const m4 = visionModesRef.current['CAM-04'] || 'DAY';
+        if (m4 !== 'DAY') {
+          try {
+            const imgData = ctx.getImageData(0, 0, w, h);
+            applyVisionFilter(imgData, m4);
+            ctx.putImageData(imgData, 0, 0);
+          } catch (_) {}
+        }
+        drawBorderOverlays(ctx, w, h, 'CAM-04', m4);
       }
 
       animationFrameId = requestAnimationFrame(renderSimFeeds);
@@ -782,12 +1235,60 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
         </div>
       )}
 
+      {/* Tactical Quick Demo Scenarios Bar */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: 6,
+          marginBottom: 10,
+          padding: '6px 12px',
+          background: 'rgba(6, 12, 24, 0.9)',
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 4,
+        }}
+      >
+        <span style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'var(--font-ui)', letterSpacing: 1, fontWeight: 700 }}>
+          OPTICAL OPERATIONS:
+        </span>
+        {[
+          { id: 'NORMAL_DAY', label: 'NORMAL DAY', desc: 'All cameras standard optical' },
+          { id: 'NIGHT_PATROL', label: 'NIGHT PATROL', desc: 'Phosphor NVD + Thermal' },
+          { id: 'FOG_OPERATION', label: 'FOG DEHAZE', desc: 'Atmospheric contrast penetration' },
+          { id: 'THERMAL_SEARCH', label: 'THERMAL SCAN', desc: 'MWIR heatmap search' },
+          { id: 'LOW_VISIBILITY', label: 'LOW VISIBILITY', desc: 'Gamma boost + Rain enhancement' },
+          { id: 'AI_OVERWATCH', label: 'AI VISION', desc: 'AI contrast telemetry mode' },
+        ].map((sc) => (
+          <button
+            key={sc.id}
+            className="btn-cam-action"
+            style={{ fontSize: 9, padding: '3px 8px', letterSpacing: 0.5 }}
+            onClick={() => applyScenario(sc.id)}
+            title={sc.desc}
+          >
+            {sc.label}
+          </button>
+        ))}
+
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 9, color: 'var(--text-dim)', fontFamily: 'var(--font-ui)' }}>
+            SURVEILLANCE HUD:
+          </span>
+          <span style={{ fontSize: 10, color: '#00f0ff', fontFamily: 'var(--font-ui)', fontWeight: 600 }}>
+            ZERO-LINE ACTIVE
+          </span>
+        </div>
+      </div>
+
       <div className={`cctv-grid-2x2 ${maximizedCam ? 'single-maximized' : ''}`}>
         {cameras.map((cam) => {
           if (maximizedCam && maximizedCam !== cam.id) return null;
 
           const isCam1 = cam.id === 'CAM-01';
           const isAlerting = alerts.some((a) => a.camera === cam.id && a.severity === 'CRITICAL');
+          const camMode = visionModes[cam.id] || 'DAY';
+          const envStatus = getEnvStatus(cam.id, camMode);
 
           return (
             <div key={cam.id} className={`cctv-panel ${isAlerting ? 'panel-alert' : ''}`}>
@@ -798,6 +1299,52 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
                 </div>
 
                 <div className="panel-header-right">
+                  {/* Vision Mode Selector Dropdown for EVERY Camera */}
+                  <select
+                    className="tactical-input"
+                    style={{
+                      fontSize: 10,
+                      padding: '1px 5px',
+                      height: 22,
+                      maxWidth: 125,
+                      background: '#070f1e',
+                      borderColor: camMode !== 'DAY' ? '#00f0ff' : 'var(--border-subtle)',
+                      color: camMode === 'NIGHT' ? '#10b981' : camMode === 'THERMAL' ? '#ef4444' : camMode === 'FOG' ? '#38bdf8' : '#00f0ff',
+                      fontFamily: 'var(--font-ui)',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                    value={camMode}
+                    onChange={(e) => setMode(cam.id, e.target.value)}
+                    title={`Change optical/environmental vision mode for ${cam.id}`}
+                  >
+                    {VISION_MODES.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.icon} {m.label}
+                      </option>
+                    ))}
+                  </select>
+
+                  {/* Automatic Mode Recommendation (CAM-01 heuristic) */}
+                  {isCam1 && autoSuggestedMode && autoSuggestedMode !== camMode && (
+                    <button
+                      className="btn-cam-action"
+                      style={{
+                        fontSize: 9,
+                        padding: '1px 6px',
+                        height: 22,
+                        background: 'rgba(251, 191, 36, 0.15)',
+                        borderColor: '#fbbf24',
+                        color: '#fbbf24',
+                        cursor: 'pointer',
+                      }}
+                      onClick={() => setMode('CAM-01', autoSuggestedMode)}
+                      title={`Environmental sensor suggests ${autoSuggestedMode} mode`}
+                    >
+                      💡 {autoSuggestedMode} [APPLY]
+                    </button>
+                  )}
+
                   {/* Camera Device Switcher Dropdown for CAM-01 */}
                   {isCam1 && videoDevices.length > 0 && (
                     <select
@@ -805,8 +1352,8 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
                       style={{
                         fontSize: 10,
                         padding: '2px 6px',
-                        height: 24,
-                        maxWidth: 160,
+                        height: 22,
+                        maxWidth: 140,
                         background: '#090d17',
                         borderColor: 'var(--border-subtle)',
                         color: 'var(--cyan-glow)',
@@ -869,6 +1416,19 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
                       }}
                     />
 
+                    {/* Filter Display Canvas (renders when vision mode != 'DAY') */}
+                    <canvas
+                      ref={filterCanvasRef}
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        height: '100%',
+                        display: isCameraActive && camMode !== 'DAY' ? 'block' : 'none',
+                      }}
+                    />
+
                     {/* Real-time AI HUD Overlay Canvas */}
                     <canvas
                       ref={overlayCanvasRef}
@@ -907,8 +1467,11 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
               <div className="panel-hud-footer">
                 <div className="footer-meta-left">
                   <span>RES: <strong>{isCam1 && isCameraActive ? '1280x720 (RAW)' : cam.resolution}</strong></span>
-                  <span style={{ marginLeft: 10 }}>
-                    SENSOR: <strong>{isCam1 && isCameraActive ? 'USER OPTICAL WEBCAM' : cam.sensor}</strong>
+                  <span style={{ marginLeft: 8 }}>
+                    MODE: <strong style={{ color: 'var(--cyan-glow)' }}>{camMode}</strong>
+                  </span>
+                  <span style={{ marginLeft: 8 }}>
+                    ENV: <strong>{envStatus.env}</strong>
                   </span>
                 </div>
 
@@ -921,18 +1484,24 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
                       <span
                         className="status-tag"
                         style={{
-                          marginLeft: 10,
+                          marginLeft: 8,
                           color: isWsConnected ? 'var(--status-green)' : 'var(--warning-amber)',
                         }}
                       >
-                        {isWsConnected ? '● AI STREAM LINKED' : '○ AI LINK STANDBY'}
+                        {isWsConnected ? '● AI STREAM' : '○ AI STANDBY'}
+                      </span>
+                      <span style={{ marginLeft: 8, fontSize: 9, color: 'var(--text-dim)' }}>
+                        AI: <strong style={{ color: 'var(--status-green)' }}>ONLINE</strong>
                       </span>
                     </>
                   ) : (
                     <>
                       <span className="fps-tag">{cam.fps} FPS</span>
-                      <span className="status-tag" style={{ marginLeft: 10 }}>
-                        STREAM ACTIVE
+                      <span className="status-tag" style={{ marginLeft: 8, color: 'var(--status-green)' }}>
+                        ● STREAM ACTIVE
+                      </span>
+                      <span style={{ marginLeft: 8, fontSize: 9, color: 'var(--text-dim)' }}>
+                        AI: <strong style={{ color: 'var(--status-green)' }}>ONLINE</strong>
                       </span>
                     </>
                   )}
