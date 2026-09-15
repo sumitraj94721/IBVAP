@@ -267,7 +267,8 @@ class SOCDashboardManager {
     // Login Form Submit
     const loginForm = document.getElementById("login-form");
     if (loginForm) {
-      loginForm.addEventListener("submit", async () => {
+      loginForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
         const user_id = usernameInput.value.trim();
         const password = passwordInput.value;
         const remember_me = rememberCheckbox ? rememberCheckbox.checked : false;

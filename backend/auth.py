@@ -19,6 +19,7 @@ from pydantic import BaseModel
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "security.db")
 SECRET_KEY = os.getenv("IBVAP_SECRET_KEY", "IBVAP_DEFENSE_TACTICAL_SECRET_2026_SIH26187")
 SESSION_COOKIE_NAME = "ibvap_session"
+DEMO_BYPASS_AUTH = os.getenv("DEMO_BYPASS_AUTH", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 auth_router = APIRouter(prefix="/api", tags=["Security & Incident Response"])
 
@@ -150,7 +151,9 @@ def create_session_token(user_data: Dict[str, Any]) -> str:
         "name": user_data["name"],
         "badge_id": user_data["badge_id"],
         "role": user_data["role"],
+        "rank": user_data.get("rank", "Commandant"),
         "clearance_level": user_data["clearance_level"],
+        "permissions": user_data.get("permissions", ["*"]),
         "sector": user_data["sector"],
         "exp": time.time() + 86400, # 24 hours
         "nonce": secrets.token_hex(6)
@@ -179,6 +182,20 @@ def verify_session_token(token: str) -> Optional[Dict[str, Any]]:
         return payload
     except Exception:
         return None
+
+
+def get_demo_officer(username: str = "") -> Dict[str, Any]:
+    return {
+        "username": username.strip() or "DEMO_ADMIN",
+        "name": "IBVAP Demonstration Administrator",
+        "badge_id": "DEMO-ADMIN",
+        "role": "ADMIN",
+        "rank": "Commandant",
+        "clearance_level": 4,
+        "permissions": ["*"],
+        "sector": "IBVAP Command Center",
+        "login_time": time.time()
+    }
 
 
 # -------------------------------------------------------------
@@ -211,9 +228,11 @@ async def get_current_officer(request: Request) -> Optional[Dict[str, Any]]:
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header.split(" ", 1)[1]
 
-    if not token:
-        return None
-    return verify_session_token(token)
+    if token:
+        officer = verify_session_token(token)
+        if officer:
+            return officer
+    return get_demo_officer() if DEMO_BYPASS_AUTH else None
 
 
 # -------------------------------------------------------------
@@ -222,6 +241,24 @@ async def get_current_officer(request: Request) -> Optional[Dict[str, Any]]:
 @auth_router.post("/auth/login")
 async def login(req: LoginRequest, response: Response):
     """Authenticates personnel credentials and issues an HTTP-only session cookie."""
+    if DEMO_BYPASS_AUTH:
+        user_data = get_demo_officer(req.username)
+        token = create_session_token(user_data)
+        response.set_cookie(
+            key=SESSION_COOKIE_NAME,
+            value=token,
+            httponly=True,
+            max_age=86400,
+            samesite="lax",
+            secure=False
+        )
+        return {
+            "status": "AUTHENTICATED",
+            "message": f"Welcome, {user_data['name']}. Security Clearance verified.",
+            "officer": user_data,
+            "token": token
+        }
+
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM users WHERE username = ?", (req.username.strip(),))

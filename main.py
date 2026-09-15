@@ -18,7 +18,7 @@ from jinja2 import Environment, FileSystemLoader
 
 from backend.stream_generators import stream_manager
 from backend.auth_router import auth_router, get_current_officer
-from backend.auth_service import SESSION_COOKIE_NAME, create_session_token, authenticate_credentials
+from backend.auth_service import SESSION_COOKIE_NAME, create_session_token, authenticate_credentials, DEMO_BYPASS_AUTH
 from backend.audit_service import audit_event
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -277,7 +277,7 @@ async def websocket_stream_endpoint(websocket: WebSocket):
     Checks session cookie in handshake. If unauthenticated, closes cleanly with code 1008 (Policy Violation).
     """
     officer = await get_current_officer(websocket)
-    if not officer:
+    if not officer and not DEMO_BYPASS_AUTH:
         await websocket.close(code=1008, reason="Authentication required")
         return
 
@@ -317,7 +317,7 @@ async def websocket_alerts_endpoint(websocket: WebSocket):
     Checks session cookie in handshake. If unauthenticated, closes cleanly with code 1008 (Policy Violation).
     """
     officer = await get_current_officer(websocket)
-    if not officer:
+    if not officer and not DEMO_BYPASS_AUTH:
         await websocket.close(code=1008, reason="Authentication required")
         return
 

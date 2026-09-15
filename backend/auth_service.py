@@ -18,6 +18,25 @@ SECRET_KEY = os.getenv("IBVAP_AUTH_SECRET", "IBVAP_TACTICAL_DEFENSE_AUTH_KEY_202
 SESSION_COOKIE_NAME = "ibvap_session"
 DEFAULT_SESSION_DURATION = 86400  # 24 hours
 REMEMBER_SESSION_DURATION = 604800 # 7 days
+DEMO_BYPASS_AUTH = os.getenv("DEMO_BYPASS_AUTH", "true").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def get_demo_officer(user_id: str = "") -> Dict[str, Any]:
+    """Return the full-privilege identity used by the optional demo bypass."""
+    resolved_user_id = user_id.strip() or "DEMO_ADMIN"
+    return {
+        "id": 0,
+        "user_id": resolved_user_id,
+        "full_name": "IBVAP Demonstration Administrator",
+        "rank": "Commandant",
+        "role": "ADMIN",
+        "badge": "DEMO-ADMIN",
+        "clearance_level": 4,
+        "permissions": ["*"],
+        "avatar_url": "tactical_commander_crest",
+        "active_shift": "DEMO",
+        "assigned_sector": "IBVAP Command Center"
+    }
 
 
 def authenticate_credentials(user_id: str, password: str) -> Optional[Dict[str, Any]]:
@@ -25,18 +44,8 @@ def authenticate_credentials(user_id: str, password: str) -> Optional[Dict[str, 
     Verifies user_id and password against SQLite operators table.
     Returns operator dictionary (without password/salt) if valid, None otherwise.
     """
-    if user_id.strip() == "admin" and hmac.compare_digest(password, "admin123"):
-        return {
-            "id": 1,
-            "user_id": "admin",
-            "full_name": "IBVAP Admin",
-            "rank": "Command Center Administrator",
-            "badge": "ADMIN-IBVAP",
-            "clearance_level": 4,
-            "avatar_url": "tactical_commander_crest",
-            "active_shift": "DEMO",
-            "assigned_sector": "IBVAP Command Center"
-        }
+    if DEMO_BYPASS_AUTH:
+        return get_demo_officer(user_id)
 
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -72,11 +81,14 @@ def create_session_token(operator: Dict[str, Any], remember: bool = False) -> st
     """Creates a base64-hex HMAC-SHA256 signed session token."""
     duration = REMEMBER_SESSION_DURATION if remember else DEFAULT_SESSION_DURATION
     payload = {
+        "id": operator.get("id", 0),
         "user_id": operator["user_id"],
         "full_name": operator["full_name"],
         "rank": operator["rank"],
+        "role": operator.get("role", "ADMIN"),
         "badge": operator.get("badge", ""),
         "clearance_level": operator["clearance_level"],
+        "permissions": operator.get("permissions", ["*"]),
         "avatar_url": operator.get("avatar_url", ""),
         "assigned_sector": operator["assigned_sector"],
         "session_id": secrets.token_hex(8),
