@@ -4,115 +4,214 @@ import { ANALYTICS_SUMMARY } from '../data/mockData';
 export default function AiAnalyticsView({ threatLevel, kpiData, aiTelemetry }) {
   const stats = ANALYTICS_SUMMARY;
 
-  // Live metrics from WebSocket (fall back to mock if not yet received)
-  const live = aiTelemetry?.aiStats || {};
-  const livePersons = aiTelemetry?.totalFaces ?? null;
-  const liveVehicles = aiTelemetry ? (aiTelemetry.vehicles?.length || 0) : null;
-  const liveObjects = aiTelemetry?.objects?.length ?? null;
-  const liveLatency = aiTelemetry?.latencyMs ?? null;
-  const liveThreat = aiTelemetry?.threatScore ?? null;
-  const liveZone = aiTelemetry?.zoneIntrusions ?? null;
-  const liveLoitering = aiTelemetry?.loiteringCount ?? null;
-  const odStatus = live.object_detector || 'N/A';
-  const odModel = live.object_detector_model || 'MobileNet-SSD';
-  const faceEngine = live.face_engine || 'YuNet';
-  const isLive = !!aiTelemetry;
+  // Live metrics from WebSocket / AI Pipeline
+  const liveStats = aiTelemetry?.aiStats || {};
+  const livePersons = aiTelemetry?.targets?.length ?? kpiData?.persons ?? 0;
+  const liveVehicles = aiTelemetry?.vehicles?.length ?? kpiData?.vehicles ?? 0;
+  const activeTracksCount = (aiTelemetry?.tracks?.length) || (livePersons + liveVehicles);
+  const faceMatchesCount = aiTelemetry?.faceMatches?.length ?? kpiData?.faceMatches ?? 0;
+  const anprEventsCount = aiTelemetry?.anprEvents?.length ?? kpiData?.anprEvents ?? 0;
+  const liveZoneIntrusions = aiTelemetry?.zoneIntrusions ?? kpiData?.intrusions ?? 0;
+  const liveLoitering = aiTelemetry?.loiteringCount ?? 0;
+  const liveThreat = aiTelemetry?.threatScore ?? 0;
+  const liveLatency = aiTelemetry?.latencyMs ?? 0;
 
-  const na = (val) => (val === null || val === undefined ? 'N/A' : val);
+  const yoloModel = liveStats.yolo_model || 'yolov8n.pt';
+  const yoloDevice = liveStats.yolo_device || 'CPU';
+  const yoloStatus = liveStats.yolo_status || (aiTelemetry ? 'ONLINE' : 'STANDBY');
+  const faceEngine = liveStats.face_engine || 'YuNet + SFace-128D (ONNX)';
+  const anprStatus = liveStats.anpr_status || 'ANPR MODEL NOT CONFIGURED';
+
+  const isLive = Boolean(aiTelemetry);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {/* Live AI Engine Status Panel */}
+      {/* ── Live Multi-Object Analytics Banner ─────────────────────────── */}
       <div style={{
-        background: '#060b18',
+        background: '#040814',
         border: '1px solid var(--border-subtle)',
         borderRadius: 6,
-        padding: '12px 16px',
+        padding: '12px 18px',
         display: 'flex',
         flexWrap: 'wrap',
-        gap: 20,
+        gap: 22,
         alignItems: 'center',
+        boxShadow: '0 2px 10px rgba(0,0,0,0.5)'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'var(--font-ui)' }}>AI ENGINE</span>
+          <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-ui)', fontWeight: 700 }}>
+            AI ANALYTICS
+          </span>
           <span style={{
             fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-ui)',
-            color: isLive ? 'var(--status-green)' : 'var(--text-dim)'
+            color: isLive ? 'var(--status-green)' : 'var(--text-dim)',
+            background: isLive ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255,255,255,0.05)',
+            padding: '2px 8px',
+            borderRadius: 4
           }}>
-            {isLive ? '● ONLINE' : '○ STANDBY'}
+            {isLive ? '● REAL AI ACTIVE' : '○ ENGINE STANDBY'}
           </span>
         </div>
+
         {[
-          { label: 'PERSONS', value: na(livePersons) },
-          { label: 'VEHICLES', value: na(liveVehicles) },
-          { label: 'OBJECTS', value: na(liveObjects) },
-          { label: 'ZONE INTRUSIONS', value: na(liveZone) },
-          { label: 'LOITERING', value: na(liveLoitering) },
-          { label: 'THREAT SCORE', value: liveThreat !== null ? `${liveThreat}/100` : 'N/A' },
-          { label: 'LATENCY', value: liveLatency !== null ? `${liveLatency?.toFixed(0)}ms` : 'N/A' },
-          { label: 'FACE MODEL', value: faceEngine },
-          { label: 'OBJ DETECTOR', value: odStatus, warn: odStatus === 'OFFLINE' },
-        ].map(({ label, value, warn }) => (
+          { label: 'PERSONS', value: String(livePersons).padStart(2, '0'), color: 'var(--cyan-glow)' },
+          { label: 'VEHICLES', value: String(liveVehicles).padStart(2, '0'), color: '#00d2ff' },
+          { label: 'ACTIVE TRACKS', value: String(activeTracksCount).padStart(2, '0'), color: '#a78bfa' },
+          { label: 'FACE MATCHES', value: String(faceMatchesCount).padStart(2, '0'), color: faceMatchesCount > 0 ? 'var(--status-green)' : 'var(--text-dim)' },
+          { label: 'ANPR EVENTS', value: String(anprEventsCount).padStart(2, '0'), color: anprEventsCount > 0 ? '#38bdf8' : 'var(--text-dim)' },
+          { label: 'INTRUSIONS', value: String(liveZoneIntrusions).padStart(2, '0'), color: liveZoneIntrusions > 0 ? 'var(--alert-red)' : 'var(--status-green)' },
+          { label: 'THREAT SCORE', value: `${liveThreat}/100`, color: liveThreat >= 55 ? 'var(--alert-red)' : 'var(--cyan-glow)' },
+          { label: 'LATENCY', value: liveLatency > 0 ? `${liveLatency.toFixed(0)} ms` : '--', color: 'var(--text-main)' },
+        ].map(({ label, value, color }) => (
           <div key={label} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
             <span style={{ fontSize: 9, color: 'var(--text-dim)', fontFamily: 'var(--font-ui)', letterSpacing: 1 }}>{label}</span>
             <span style={{
-              fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-ui)',
-              color: warn ? 'var(--warning-amber)' : 'var(--cyan-glow)'
+              fontSize: 14, fontWeight: 700, fontFamily: 'var(--font-mono)',
+              color: color
             }}>{value}</span>
           </div>
         ))}
       </div>
 
-      {/* Top AI Performance Metric Cards */}
+      {/* ── Model Pipeline Architecture Cards ──────────────────────────── */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(4, 1fr)',
         gap: 12
       }}>
         <div className="kpi-card" style={{ padding: 14 }}>
-          <span className="kpi-label">AI RECOGNITION ACCURACY</span>
-          <span className="kpi-value" style={{ color: 'var(--status-green)' }}>
-            {stats.modelAccuracyPercent}%
+          <span className="kpi-label">YOLO OBJECT DETECTOR</span>
+          <span className="kpi-value" style={{ color: 'var(--status-green)', fontSize: 16 }}>
+            {yoloModel.toUpperCase()}
           </span>
           <span style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 4 }}>
-            YuNet DNN + ResNet FER+
+            Device: <strong>{yoloDevice}</strong> | Multi-Class Surveillance
           </span>
         </div>
 
         <div className="kpi-card" style={{ padding: 14 }}>
-          <span className="kpi-label">INFERENCE LATENCY</span>
-          <span className="kpi-value" style={{ color: 'var(--cyan-glow)' }}>
-            {stats.avgResponseTimeMs} ms
+          <span className="kpi-label">MULTI-OBJECT TRACKER</span>
+          <span className="kpi-value" style={{ color: 'var(--cyan-glow)', fontSize: 16 }}>
+            BYTETRACK / IOU
           </span>
           <span style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 4 }}>
-            CPU Optimized / &lt;15ms frame cycle
+            Persistent Target IDs (P-xxx &amp; V-xxx)
           </span>
         </div>
 
         <div className="kpi-card" style={{ padding: 14 }}>
-          <span className="kpi-label">INTRUSIONS PREVENTED</span>
-          <span className="kpi-value" style={{ color: 'var(--alert-red)' }}>
-            {kpiData.intrusions}
+          <span className="kpi-label">FACE RECOGNITION</span>
+          <span className="kpi-value" style={{ color: '#a78bfa', fontSize: 15 }}>
+            SFACE 128D (ONNX)
           </span>
           <span style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 4 }}>
-            Zero perimeter breach tolerance
+            YuNet DNN + Cosine Watchlist Matching
           </span>
         </div>
 
         <div className="kpi-card" style={{ padding: 14 }}>
-          <span className="kpi-label">OVERALL THREAT LEVEL</span>
-          <span className="kpi-value" style={{ 
-            color: threatLevel === 'CRITICAL' ? 'var(--alert-red)' : 'var(--warning-amber)' 
-          }}>
-            {threatLevel}
+          <span className="kpi-label">ANPR PIPELINE</span>
+          <span className="kpi-value" style={{ color: '#38bdf8', fontSize: 14 }}>
+            {anprStatus.includes('NOT CONFIGURED') ? 'STANDBY' : 'ONLINE'}
           </span>
           <span style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 4 }}>
-            Active border state
+            {anprStatus}
           </span>
         </div>
       </div>
 
-      {/* Main Analytics Charts */}
+      {/* ── Active Multi-Object Tracks Split Grid ──────────────────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+        {/* Person Tracks Table */}
+        <div className="chart-card">
+          <div className="chart-header">
+            <span>👤 ACTIVE PERSON TRACKS [{livePersons}]</span>
+            <span style={{ fontSize: 10, color: 'var(--cyan-glow)' }}>P-SERIES IDENTIFIERS</span>
+          </div>
+
+          <div style={{ marginTop: 10, maxHeight: 180, overflowY: 'auto' }}>
+            {(!aiTelemetry?.targets || aiTelemetry.targets.length === 0) ? (
+              <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
+                No active person targets currently in optical view.
+              </div>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                <thead>
+                  <tr style={{ color: 'var(--text-dim)', borderBottom: '1px solid var(--border-subtle)', textAlign: 'left' }}>
+                    <th style={{ padding: '4px 6px' }}>TRACK</th>
+                    <th>CONF</th>
+                    <th>DIRECTION</th>
+                    <th>SPEED</th>
+                    <th>FACE MATCH</th>
+                    <th>ZONE</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {aiTelemetry.targets.map((t) => (
+                    <tr key={t.target_id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                      <td style={{ padding: '6px', color: 'var(--cyan-glow)', fontWeight: 700 }}>{t.target_id}</td>
+                      <td>{t.detection_confidence?.toFixed(0)}%</td>
+                      <td style={{ color: '#38bdf8' }}>{t.direction || 'STAT'}</td>
+                      <td>{t.relative_speed ? `${t.relative_speed.toFixed(1)} px/s` : '0.0'}</td>
+                      <td style={{ color: t.face_match?.face_match ? 'var(--status-green)' : 'var(--text-dim)' }}>
+                        {t.face_match?.face_match ? t.face_match.display_name : 'UNKNOWN'}
+                      </td>
+                      <td style={{ color: t.in_restricted_zone ? 'var(--alert-red)' : 'var(--status-green)' }}>
+                        {t.in_restricted_zone ? 'RESTRICTED' : 'CLEAR'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+
+        {/* Vehicle Tracks Table */}
+        <div className="chart-card">
+          <div className="chart-header">
+            <span>🚗 ACTIVE VEHICLE TRACKS [{liveVehicles}]</span>
+            <span style={{ fontSize: 10, color: '#00d2ff' }}>V-SERIES IDENTIFIERS</span>
+          </div>
+
+          <div style={{ marginTop: 10, maxHeight: 180, overflowY: 'auto' }}>
+            {(!aiTelemetry?.vehicles || aiTelemetry.vehicles.length === 0) ? (
+              <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
+                No active vehicle targets currently in optical view.
+              </div>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                <thead>
+                  <tr style={{ color: 'var(--text-dim)', borderBottom: '1px solid var(--border-subtle)', textAlign: 'left' }}>
+                    <th style={{ padding: '4px 6px' }}>TRACK</th>
+                    <th>TYPE</th>
+                    <th>CONF</th>
+                    <th>DIRECTION</th>
+                    <th>SPEED</th>
+                    <th>PLATE</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {aiTelemetry.vehicles.map((v) => (
+                    <tr key={v.track_id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                      <td style={{ padding: '6px', color: '#00d2ff', fontWeight: 700 }}>{v.track_id}</td>
+                      <td>{v.object_type || 'VEHICLE'}</td>
+                      <td>{v.confidence?.toFixed(0)}%</td>
+                      <td style={{ color: '#38bdf8' }}>{v.direction || 'STAT'}</td>
+                      <td>{v.relative_speed ? `${v.relative_speed.toFixed(1)} px/s` : '0.0'}</td>
+                      <td style={{ color: v.plate && v.plate !== 'N/A' ? '#f59e0b' : 'var(--text-dim)', fontWeight: 600 }}>
+                        {v.plate || 'STANDBY'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Main Analytics Charts ──────────────────────────────────────── */}
       <div className="analytics-grid">
         {/* Hourly Threat Detection Activity */}
         <div className="chart-card">
@@ -169,44 +268,30 @@ export default function AiAnalyticsView({ threatLevel, kpiData, aiTelemetry }) {
         {/* Object Classification Breakdown */}
         <div className="chart-card">
           <div className="chart-header">
-            <span>🎯 OBJECT CATEGORIES</span>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 10 }}>
-            {stats.detectionsByCategory.map((cat, i) => (
-              <div key={i}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4 }}>
-                  <span>{cat.category}</span>
-                  <strong style={{ color: 'var(--cyan-glow)' }}>{cat.count} ({cat.percentage}%)</strong>
-                </div>
-                <div style={{ width: '100%', height: 7, background: '#090d18', borderRadius: 4, overflow: 'hidden' }}>
-                  <div style={{
-                    width: `${cat.percentage}%`,
-                    height: '100%',
-                    background: i === 0 ? 'var(--cyan-glow)' : i === 1 ? 'var(--warning-amber)' : 'var(--status-green)'
-                  }}></div>
-                </div>
-              </div>
-            ))}
+            <span>🎯 MULTI-OBJECT SURVEILLANCE ARCHITECTURE</span>
           </div>
 
           <div style={{
-            marginTop: 20,
-            padding: 10,
+            marginTop: 10,
+            padding: 12,
             background: '#090d18',
             border: '1px solid var(--border-subtle)',
             borderRadius: 4,
-            fontSize: 10.5,
-            color: 'var(--text-muted)',
-            lineHeight: 1.5
+            fontSize: 11,
+            color: 'var(--text-main)',
+            lineHeight: 1.7
           }}>
-            <strong style={{ color: 'var(--gold-commander)' }}>SIH 2026 AI ARCHITECTURE:</strong>
+            <strong style={{ color: 'var(--gold-commander)' }}>SIH 26187 / RAKSHAN UPGRADED PIPELINE:</strong>
             <br />
-            1. Fast YuNet face &amp; person detection (&lt;12ms)
+            1. <strong>Ultralytics YOLOv8</strong> multi-class object detection (person, car, truck, bus, bike)
             <br />
-            2. Centroid &amp; IoU Euclidean tracking (LOC_#ID)
+            2. <strong>ByteTrack Multi-Object Tracker</strong> with persistent <code>P-xxx</code> and <code>V-xxx</code> IDs
             <br />
-            3. Microsoft FER+ ONNX expression profiling
+            3. <strong>YuNet + SFace 128D</strong> facial alignment &amp; cosine watchlist matching
+            <br />
+            4. <strong>Dedicated ANPR Pipeline</strong> with syntax validation (no fake detections)
+            <br />
+            5. <strong>Observable CV Event Engine</strong> (zone intrusions, loitering, speed violations)
           </div>
         </div>
       </div>

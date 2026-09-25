@@ -10,11 +10,15 @@ export default function Sidebar({
   onLogout 
 }) {
   const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: '📊' },
+    { id: 'dashboard', label: 'Command Center', icon: '📊' },
+    { id: 'anpr', label: 'Vehicle ANPR', icon: '🚗' },
     { id: 'surveillance', label: 'Live Surveillance', icon: '📹' },
+    { id: 'twin', label: 'Digital Border Twin', icon: '🌐' },
+    { id: 'master-console', label: 'Master Console', icon: '🖥️' },
     { id: 'map', label: 'Border Map', icon: '🗺️' },
     { id: 'alerts', label: 'Alerts', icon: '🚨', badge: alertsCount },
     { id: 'analytics', label: 'AI Analytics', icon: '🧠' },
+    { id: 'dossiers', label: 'Incident Dossiers', icon: '📁' },
     { id: 'cameras', label: 'Camera Network', icon: '📡' },
     { id: 'history', label: 'Event History', icon: '📜' },
     { id: 'settings', label: 'Settings', icon: '⚙️' },

@@ -10,6 +10,16 @@ import CameraStatusTable from './components/CameraStatusTable';
 import AiAnalyticsView from './components/AiAnalyticsView';
 import EventTimeline from './components/EventTimeline';
 import SettingsView from './components/SettingsView';
+import VehicleANPR from './components/VehicleANPR';
+import LiveSurveillance from './components/LiveSurveillance';
+import MasterConsole from './components/MasterConsole';
+import DigitalBorderTwin from './components/DigitalBorderTwin';
+import SecondaryViews from './components/SecondaryViews';
+import PTZPadModal from './components/PTZPadModal';
+import TacticalLockoutModal from './components/TacticalLockoutModal';
+import ConsoleLockOverlay from './components/ConsoleLockOverlay';
+import SnapshotModal from './components/SnapshotModal';
+import { INITIAL_DOSSIER } from './types/tacticalTypes';
 
 import {
   INITIAL_CAMERAS,
@@ -43,13 +53,24 @@ export default function App() {
   const [aiTelemetry, setAiTelemetry] = useState(null);
   const lastAiAlertIdsRef = React.useRef(new Set());
 
-  // Dynamic KPI Data
+  // Dynamic KPI Data derived from live multi-object AI pipeline
+  const activePersons = aiTelemetry?.aiStats?.persons_count ?? aiTelemetry?.targets?.length ?? 0;
+  const activeVehicles = aiTelemetry?.aiStats?.vehicles_count ?? aiTelemetry?.vehicles?.length ?? 0;
+  const activeTracks = aiTelemetry?.aiStats?.active_tracks ?? aiTelemetry?.tracks?.length ?? (activePersons + activeVehicles);
+  const faceMatches = aiTelemetry?.aiStats?.face_matches_count ?? aiTelemetry?.face_matches?.length ?? 0;
+  const anprEvents = aiTelemetry?.aiStats?.anpr_events_count ?? aiTelemetry?.anpr_events?.length ?? 0;
+  const activeIntrusions = (aiTelemetry?.zone_intrusions ?? 0) + alerts.filter((a) => a.severity === 'CRITICAL' && a.status === 'ACTIVE').length;
+
   const kpiData = {
     totalCameras: cameras.length,
     activeAlerts: alerts.filter((a) => a.status === 'ACTIVE').length,
-    intrusions: alerts.filter((a) => a.severity === 'CRITICAL').length,
-    persons: 38,
-    vehicles: 24,
+    intrusions: activeIntrusions,
+    persons: activePersons,
+    vehicles: activeVehicles,
+    activeTracks: activeTracks,
+    faceMatches: faceMatches,
+    anprEvents: anprEvents,
+    latencyMs: aiTelemetry?.latencyMs ?? 0,
     systemStatus: 'DEFENSE GRID ARMED',
   };
 
@@ -228,6 +249,59 @@ export default function App() {
     soundManager.playAlertChime('HIGH');
   };
 
+  // Tactical Modals & Dossier State
+  const [isConsoleLocked, setIsConsoleLocked] = useState(false);
+  const [ptzModalOpen, setPtzModalOpen] = useState(false);
+  const [ptzSelectedCam, setPtzSelectedCam] = useState('CAM-01 (Forward Optical)');
+  const [lockoutModalOpen, setLockoutModalOpen] = useState(false);
+  const [snapshotModalOpen, setSnapshotModalOpen] = useState(false);
+  const [snapshotTimestamp, setSnapshotTimestamp] = useState('');
+  const [dossier, setDossier] = useState(INITIAL_DOSSIER);
+
+  const handleOpenPTZ = (camCode) => {
+    setPtzSelectedCam(camCode || 'CAM-01 (Forward Optical)');
+    setPtzModalOpen(true);
+  };
+
+  const handleTakeSnapshot = () => {
+    const now = new Date();
+    const time = `${String(now.getHours()).padStart(2, '0')}:${String(
+      now.getMinutes()
+    ).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')} IST`;
+    setSnapshotTimestamp(time);
+    setSnapshotModalOpen(true);
+  };
+
+  const handleToggleSopStep = (index) => {
+    setDossier((prev) => {
+      const nextSteps = [...prev.sopSteps];
+      const step = nextSteps[index];
+      const willBeComplete = !step.completed;
+      nextSteps[index] = {
+        ...step,
+        completed: willBeComplete,
+        status: willBeComplete ? 'DONE' : 'PENDING',
+        statusType: willBeComplete ? 'success' : 'error',
+      };
+      return { ...prev, sopSteps: nextSteps };
+    });
+  };
+
+  const handleExecuteLockout = () => {
+    setThreatLevel('CRITICAL');
+    setDossier((prev) => ({
+      ...prev,
+      sopSteps: prev.sopSteps.map((s) => ({
+        ...s,
+        completed: true,
+        status: 'DONE',
+        statusType: 'success',
+      })),
+    }));
+    soundManager.playAlertChime('CRITICAL');
+    soundManager.toggleSiren((active) => setIsSirenActive(active));
+  };
+
   // Handler: Reset Demo
   const handleResetDemo = () => {
     setCameras(INITIAL_CAMERAS);
@@ -251,6 +325,7 @@ export default function App() {
         onLogout={handleLogout}
         isSirenActive={isSirenActive}
         onToggleSiren={handleToggleSiren}
+        onLockConsole={() => setIsConsoleLocked(true)}
       />
 
       {/* Top Telemetry KPI Ribbon */}
@@ -274,7 +349,13 @@ export default function App() {
           {currentTab === 'dashboard' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               {/* Primary 2x2 CCTV Grid */}
-              <LiveSurveillanceGrid cameras={cameras} alerts={alerts} onAiUpdate={handleAiUpdate} />
+              <LiveSurveillanceGrid
+                cameras={cameras}
+                alerts={alerts}
+                onAiUpdate={handleAiUpdate}
+                onOpenPTZ={handleOpenPTZ}
+                onTakeSnapshot={handleTakeSnapshot}
+              />
 
               {/* Tactical Border Map */}
               <TacticalBorderMap alerts={alerts} />
@@ -291,11 +372,68 @@ export default function App() {
             </div>
           )}
 
+          {currentTab === 'anpr' && (
+            <VehicleANPR
+              aiTelemetry={aiTelemetry}
+              onOpenPTZ={handleOpenPTZ}
+              onNavigateToScreen={(tab) => setCurrentTab(tab)}
+            />
+          )}
+
+          {currentTab === 'master-console' && (
+            <MasterConsole
+              onOpenPTZ={handleOpenPTZ}
+              onOpenLockout={() => setLockoutModalOpen(true)}
+              onTakeSnapshot={handleTakeSnapshot}
+              onNavigateToScreen={(tab) => setCurrentTab(tab)}
+              alerts={alerts}
+              onAcknowledgeAlert={handleAcknowledgeAlert}
+              onIgnoreAlert={(id) => setAlerts((prev) => prev.filter((a) => a.id !== id))}
+              dossier={dossier}
+              onToggleSopStep={handleToggleSopStep}
+              kpiData={kpiData}
+              threatLevel={threatLevel}
+            />
+          )}
+
+          {currentTab === 'twin' && (
+            <DigitalBorderTwin
+              onOpenPTZ={handleOpenPTZ}
+              onOpenLockout={() => setLockoutModalOpen(true)}
+              onNavigateToScreen={(tab) => setCurrentTab(tab)}
+              alerts={alerts}
+              aiTelemetry={aiTelemetry}
+            />
+          )}
+
           {currentTab === 'surveillance' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <LiveSurveillanceGrid cameras={cameras} alerts={alerts} onAiUpdate={handleAiUpdate} />
+              <LiveSurveillanceGrid
+                cameras={cameras}
+                alerts={alerts}
+                onAiUpdate={handleAiUpdate}
+                onOpenPTZ={handleOpenPTZ}
+                onTakeSnapshot={handleTakeSnapshot}
+              />
+              <LiveSurveillance
+                onOpenPTZ={handleOpenPTZ}
+                onTakeSnapshot={handleTakeSnapshot}
+                onNavigateToScreen={(tab) => setCurrentTab(tab)}
+              />
               <CameraStatusTable cameras={cameras} />
             </div>
+          )}
+
+          {currentTab === 'dossiers' && (
+            <SecondaryViews
+              currentScreen="incident-dossiers"
+              alerts={alerts}
+              onAcknowledgeAlert={handleAcknowledgeAlert}
+              onIgnoreAlert={(id) => setAlerts((prev) => prev.filter((a) => a.id !== id))}
+              dossier={dossier}
+              onNavigateToScreen={(tab) => setCurrentTab(tab)}
+              onOpenLockout={() => setLockoutModalOpen(true)}
+            />
           )}
 
           {currentTab === 'map' && (
@@ -333,6 +471,30 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {/* Interactive Tactical Modals */}
+      <PTZPadModal
+        isOpen={ptzModalOpen}
+        onClose={() => setPtzModalOpen(false)}
+        selectedCam={ptzSelectedCam}
+      />
+
+      <TacticalLockoutModal
+        isOpen={lockoutModalOpen}
+        onClose={() => setLockoutModalOpen(false)}
+        onExecute={handleExecuteLockout}
+      />
+
+      <ConsoleLockOverlay
+        isLocked={isConsoleLocked}
+        onUnlock={() => setIsConsoleLocked(false)}
+      />
+
+      <SnapshotModal
+        isOpen={snapshotModalOpen}
+        onClose={() => setSnapshotModalOpen(false)}
+        timestamp={snapshotTimestamp}
+      />
     </div>
   );
 }

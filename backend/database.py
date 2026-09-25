@@ -8,6 +8,7 @@ import sqlite3
 import hashlib
 import secrets
 import time
+import json
 from typing import Dict, Any, Optional
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "security.db")
@@ -78,6 +79,95 @@ def init_db():
             defensive_actions TEXT NOT NULL,
             timestamp TEXT NOT NULL,
             signature_hash TEXT NOT NULL
+        )
+    """)
+
+    # 4. Known Suspects / Watchlist & Personnel Table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS known_suspects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            person_code TEXT UNIQUE NOT NULL,
+            display_name TEXT NOT NULL,
+            embedding TEXT NOT NULL,
+            embedding_model TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'WATCHLIST',
+            metadata TEXT
+        )
+    """)
+
+    # 5. Real Detections Table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS detections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            camera_id TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            class_name TEXT NOT NULL,
+            category TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            bbox_json TEXT NOT NULL,
+            track_id TEXT
+        )
+    """)
+
+    # 6. Persistent Tracks Table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS tracks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            track_id TEXT NOT NULL,
+            camera_id TEXT NOT NULL,
+            category TEXT NOT NULL,
+            class_name TEXT NOT NULL,
+            first_seen TEXT NOT NULL,
+            last_seen TEXT NOT NULL,
+            total_frames INTEGER DEFAULT 1,
+            max_confidence REAL NOT NULL,
+            status TEXT NOT NULL DEFAULT 'ACTIVE'
+        )
+    """)
+
+    # 7. ANPR Events Table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS anpr_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            camera_id TEXT NOT NULL,
+            vehicle_track_id TEXT,
+            plate_text TEXT NOT NULL,
+            ocr_confidence REAL NOT NULL,
+            timestamp TEXT NOT NULL,
+            snapshot_path TEXT,
+            status TEXT NOT NULL DEFAULT 'VERIFIED'
+        )
+    """)
+
+    # 8. Security Events Table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS security_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            camera_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            title TEXT NOT NULL,
+            details TEXT,
+            track_id TEXT,
+            confidence REAL,
+            timestamp TEXT NOT NULL,
+            snapshot_path TEXT
+        )
+    """)
+
+    # 9. Cameras Table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS cameras (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            sector TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            stream_url TEXT,
+            status TEXT NOT NULL DEFAULT 'ONLINE',
+            is_active INTEGER DEFAULT 1,
+            fps REAL DEFAULT 30.0
         )
     """)
 
@@ -155,6 +245,38 @@ def init_db():
                 op["clearance_level"], op["avatar_url"], op["active_shift"], op["assigned_sector"],
                 op["user_id"]
             ))
+
+    # Seed default camera entries if missing
+    seed_cameras = [
+        {"id": "CAM-01", "name": "Sector Alpha [Local Optical]", "sector": "Sector Alpha", "source_type": "LOCAL_WEBCAM", "stream_url": None, "status": "ONLINE", "fps": 30.0},
+        {"id": "CAM-02", "name": "Sector Bravo [Perimeter Night Vision]", "sector": "Sector Bravo", "source_type": "EDGE_NODE", "stream_url": "/video_feed/cam2", "status": "ONLINE", "fps": 25.0},
+        {"id": "CAM-03", "name": "Sector Charlie [Riverine FLIR Thermal]", "sector": "Sector Charlie", "source_type": "IP_CCTV", "stream_url": "/video_feed/cam3", "status": "ONLINE", "fps": 25.0},
+        {"id": "CAM-04", "name": "Sector Delta [Checkpost Barrier ANPR]", "sector": "Sector Delta", "source_type": "ANPR_BARRIER", "stream_url": "/video_feed/cam4", "status": "ONLINE", "fps": 25.0},
+    ]
+    for cam in seed_cameras:
+        cursor.execute("SELECT id FROM cameras WHERE id = ?", (cam["id"],))
+        if not cursor.fetchone():
+            cursor.execute("""
+                INSERT INTO cameras (id, name, sector, source_type, stream_url, status, is_active, fps)
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+            """, (cam["id"], cam["name"], cam["sector"], cam["source_type"], cam["stream_url"], cam["status"], cam["fps"]))
+
+    # Seed known_suspects baseline watchlist entry if empty
+    cursor.execute("SELECT COUNT(*) FROM known_suspects")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("""
+            INSERT INTO known_suspects (person_code, display_name, embedding, embedding_model, created_at, updated_at, status, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            "WATCH-014",
+            "Person of Interest #14",
+            "[]",
+            "SFace-128D",
+            "2026-09-25T06:00:00Z",
+            "2026-09-25T06:00:00Z",
+            "WATCHLIST",
+            json.dumps({"notes": "Monitored cross-border subject", "priority": "HIGH"})
+        ))
 
     conn.commit()
     conn.close()

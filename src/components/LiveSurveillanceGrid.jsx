@@ -173,7 +173,7 @@ function getEnvStatus(camId, mode) {
   }
 }
 
-export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
+export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOpenPTZ, onTakeSnapshot }) {
   // Camera Ingestion & Device State
   const [videoDevices, setVideoDevices] = useState([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
@@ -436,9 +436,12 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
                 targets: data.targets || [],
                 faces: data.faces || [],
                 vehicles: data.vehicles || [],
-                totalFaces: data.total_faces || 0,
+                tracks: data.tracks || [],
+                faceMatches: data.face_matches || [],
+                anprEvents: data.anpr_events || [],
+                totalFaces: data.total_faces || (data.targets?.length || 0),
                 highThreats: data.high_threat_count || 0,
-                // New AI fields
+                // Multi-object AI fields
                 objects: data.objects || [],
                 odPersons: data.od_persons || [],
                 odVehicles: data.od_vehicles || [],
@@ -754,30 +757,29 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
             const panelY = Math.max(4, y - 4);
             const lines = [];
 
-            // Line 1: Target ID + type
+            // Line 1: Target ID + type (e.g. PERSON P-001)
             lines.push({ text: `PERSON ${targetId}`, color: themeColor, bold: true });
-            // Line 2: Emotion / confidence
-            lines.push({ text: `${emotionName.toUpperCase()}  CONF:${conf.toFixed(0)}%`, color: '#e2e8f0' });
-            // Line 3: Age group (heuristic)
-            if (ageGroup && ageGroup !== 'UNKNOWN') {
-              lines.push({ text: `AGE GRP: ${ageGroup} [EST]`, color: '#94a3b8' });
+            // Line 2: Detection confidence
+            lines.push({ text: `CONF: ${conf.toFixed(0)}%`, color: '#e2e8f0' });
+            // Line 3: Face match outcome (neutral terminology)
+            const fm = target.face_match;
+            if (fm && fm.face_match && fm.display_name && fm.display_name !== 'UNKNOWN') {
+              lines.push({ text: `MATCH: ${fm.display_name} (${(fm.similarity * 100).toFixed(0)}%)`, color: '#10b981', bold: true });
+            } else if (target.hud_name && target.hud_name.includes('MATCH')) {
+              lines.push({ text: target.hud_name, color: '#10b981', bold: true });
+            } else {
+              lines.push({ text: `FACE: UNKNOWN [NO MATCH]`, color: '#94a3b8' });
             }
-            // Line 4: Movement direction
-            if (movement && movement !== 'STATIONARY') {
-              lines.push({ text: `${movement} ▶ ${direction}`, color: '#38bdf8' });
-            }
-            // Line 5: Objects in hand
-            if (objectsInHand.length > 0) {
-              const oname = objectsInHand[0].class_name.toUpperCase();
-              lines.push({ text: `${oname} — LIKELY IN HAND`, color: '#f59e0b' });
-            }
-            // Line 6: Zone alert
+            // Line 4: Movement direction and estimated relative speed
+            const speedVal = target.relative_speed ? `${target.relative_speed.toFixed(1)} px/s [EST]` : '0.0 px/s';
+            lines.push({ text: `${direction || 'STATIONARY'} ▶ ${speedVal}`, color: '#38bdf8' });
+            // Line 5: Zone & Loitering
             if (loitering) {
               lines.push({ text: `⚠ LOITERING ${dwell.toFixed(0)}s`, color: '#ef4444', bold: true });
             } else if (inZone) {
-              lines.push({ text: `⚠ RESTRICTED ZONE`, color: '#fbbf24', bold: true });
+              lines.push({ text: `⚠ RESTRICTED ZONE [ALPHA]`, color: '#fbbf24', bold: true });
             }
-            // Line 7: Threat score
+            // Line 6: Threat score
             if (threatScore > 10) {
               const tLabel = threatScore >= 75 ? 'CRITICAL' : threatScore >= 55 ? 'HIGH' : threatScore >= 30 ? 'MED' : 'LOW';
               lines.push({ text: `THREAT: ${threatScore} [${tLabel}]`, color: threatScore >= 55 ? '#ef4444' : '#fbbf24' });
@@ -786,7 +788,7 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
             // Draw panel background
             const lineH = 13;
             const panelH = lines.length * lineH + 8;
-            const panelW = 165;
+            const panelW = 175;
             ctx.fillStyle = 'rgba(4, 7, 18, 0.88)';
             ctx.fillRect(panelX, panelY - panelH, panelW, panelH);
             ctx.strokeStyle = themeColor;
@@ -814,16 +816,23 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
           });
         }
 
-        // ── VEHICLE DETECTIONS (from OD) ─────────────────────────────────
-        if (aiTelemetry.odVehicles && aiTelemetry.odVehicles.length > 0) {
-          aiTelemetry.odVehicles.forEach((veh) => {
+        // ── VEHICLE DETECTIONS & TRACKS (from YOLO + Tracker) ────────────
+        const vehicleList = (aiTelemetry.vehicles && aiTelemetry.vehicles.length > 0)
+          ? aiTelemetry.vehicles
+          : (aiTelemetry.odVehicles || []);
+
+        if (vehicleList.length > 0) {
+          vehicleList.forEach((veh) => {
             const [nx, ny, nw, nh] = veh.normalized_box || [0, 0, 0, 0];
             const x = nx * cw;
             const y = ny * ch;
             const w = nw * cw;
             const h = nh * ch;
-            const vname = (veh.class_name || 'VEHICLE').toUpperCase();
+            const vname = (veh.object_type || veh.class_name || 'CAR').toUpperCase();
+            const vtrack = veh.track_id || 'V-001';
             const vconf = veh.confidence || 0;
+            const vplate = veh.plate && veh.plate !== 'N/A' ? veh.plate : null;
+            const vspeed = veh.relative_speed ? `${veh.relative_speed.toFixed(1)} px/s` : '0.0 px/s';
 
             ctx.fillStyle = 'rgba(0, 210, 255, 0.08)';
             ctx.fillRect(x, y, w, h);
@@ -834,23 +843,45 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
             ctx.strokeRect(x, y, w, h);
             ctx.setLineDash([]);
 
-            // Label
+            // Vehicle HUD info card
+            const vLines = [
+              { text: `${vname} ${vtrack}`, color: '#00d2ff', bold: true },
+              { text: `CONF: ${vconf.toFixed(0)}%`, color: '#e2e8f0' },
+            ];
+            if (vplate) {
+              vLines.push({ text: `PLATE: ${vplate}`, color: '#f59e0b', bold: true });
+            }
+            if (veh.direction) {
+              vLines.push({ text: `${veh.direction} ▶ ${vspeed}`, color: '#38bdf8' });
+            }
+            if (veh.in_restricted_zone) {
+              vLines.push({ text: `⚠ RESTRICTED ZONE`, color: '#ef4444', bold: true });
+            }
+
+            const vlH = 13;
+            const vpH = vLines.length * vlH + 6;
+            const vpW = 150;
+            const vpX = Math.min(x, cw - vpW);
+            const vpY = Math.max(2, y - 4);
+
             ctx.fillStyle = 'rgba(4, 7, 18, 0.90)';
-            const lW = 145;
-            ctx.fillRect(x, Math.max(2, y - 20), lW, 18);
+            ctx.fillRect(vpX, vpY - vpH, vpW, vpH);
             ctx.strokeStyle = '#00d2ff';
             ctx.lineWidth = 1;
-            ctx.strokeRect(x, Math.max(2, y - 20), lW, 18);
-            ctx.fillStyle = '#00d2ff';
-            ctx.font = "bold 9px 'JetBrains Mono', monospace";
-            ctx.fillText(`VEHICLE: ${vname}  ${vconf.toFixed(0)}%`, x + 5, Math.max(14, y - 7));
+            ctx.strokeRect(vpX, vpY - vpH, vpW, vpH);
+
+            vLines.reverse().forEach((vl, vi) => {
+              ctx.fillStyle = vl.color || '#e2e8f0';
+              ctx.font = `${vl.bold ? 'bold ' : ''}9px 'JetBrains Mono', monospace`;
+              ctx.fillText(vl.text, vpX + 5, vpY - 4 - vi * vlH);
+            });
           });
         }
 
-        // ── OBJECT DETECTIONS ─────────────────────────────────────────────
+        // ── OBJECT DETECTIONS (Generic) ──────────────────────────────────
         if (aiTelemetry.objects && aiTelemetry.objects.length > 0) {
           aiTelemetry.objects.forEach((obj) => {
-            if (obj.category === 'person') return; // already shown above
+            if (obj.category === 'person' || obj.category === 'vehicle') return;
             const [nx, ny, nw, nh] = obj.normalized_box || [0, 0, 0, 0];
             const x = nx * cw;
             const y = ny * ch;
@@ -892,17 +923,17 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
 
         // ── CAMERA STATUS STRIP (bottom-left) ─────────────────────────────
         const stats = aiTelemetry.aiStats || {};
-        const odStat = stats.object_detector || 'N/A';
-        const personsN = aiTelemetry.totalFaces || 0;
-        ctx.fillStyle = 'rgba(4, 7, 18, 0.80)';
-        ctx.fillRect(4, ch - 28, 280, 24);
+        const personsN = aiTelemetry.targets?.length || 0;
+        const vehN = (aiTelemetry.vehicles?.length || 0);
+        ctx.fillStyle = 'rgba(4, 7, 18, 0.85)';
+        ctx.fillRect(4, ch - 28, 300, 24);
         ctx.strokeStyle = 'rgba(0, 240, 255, 0.4)';
         ctx.lineWidth = 1;
-        ctx.strokeRect(4, ch - 28, 280, 24);
+        ctx.strokeRect(4, ch - 28, 300, 24);
         ctx.fillStyle = '#00f0ff';
         ctx.font = "8px 'JetBrains Mono', monospace";
         ctx.fillText(
-          `FACE-AI: ${personsN}P  OD:${odStat}  LAT:${aiTelemetry.latencyMs?.toFixed(0)||'?'}ms`,
+          `YOLOv8: ${personsN}P ${vehN}V | SFace-128D | LAT: ${aiTelemetry.latencyMs?.toFixed(0)||'?'}ms`,
           10, ch - 12
         );
 
@@ -1351,6 +1382,26 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate }) {
                     <span className="rec-dot"></span>
                     <span>REC</span>
                   </div>
+
+                  {onOpenPTZ && (
+                    <button
+                      className="btn-cam-action"
+                      onClick={() => onOpenPTZ(`${cam.id} (${cam.sector || 'Sector'})`)}
+                      title="Launch PTZ Tactical Slew Pad"
+                    >
+                      ✢ PTZ
+                    </button>
+                  )}
+
+                  {onTakeSnapshot && (
+                    <button
+                      className="btn-cam-action"
+                      onClick={onTakeSnapshot}
+                      title="Capture Quad Snapshot Archive"
+                    >
+                      📷 SNAP
+                    </button>
+                  )}
 
                   <button
                     className="btn-cam-action"
