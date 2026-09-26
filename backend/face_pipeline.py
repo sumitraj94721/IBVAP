@@ -227,16 +227,11 @@ class SurveillanceVisionPipeline:
                             "similarity": 0.0
                         },
                         "emotion": {
-<<<<<<< HEAD
-                            "primary_expression": "NOT AVAILABLE",
-                            "confidence": 0.0,
-                            "available": False
-=======
                             "primary_expression": "UNAVAILABLE",
                             "confidence": 0.0,
                             "model_status": "OFFLINE",
+                            "available": False,
                             "is_available": False,
->>>>>>> 4a6833b02d4cadc50ae6d8cd4dfe524a43c05219
                         }
                     }
                     self._last_face_results[face_cache_key] = face_info
@@ -246,13 +241,8 @@ class SurveillanceVisionPipeline:
                 face_info = {
                     "has_face": False,
                     "landmarks": [],
-<<<<<<< HEAD
                     "match": {"face_match": False, "status": "NO MATCH", "person_code": None, "display_name": "UNKNOWN", "similarity": 0.0},
-                    "emotion": {"primary_expression": "NOT AVAILABLE", "confidence": 0.0, "available": False}
-=======
-                    "match": {"face_match": False, "status": "UNKNOWN PERSON", "person_code": None, "display_name": "UNKNOWN", "similarity": 0.0},
-                    "emotion": {"primary_expression": "UNAVAILABLE", "confidence": 0.0, "model_status": "OFFLINE", "is_available": False}
->>>>>>> 4a6833b02d4cadc50ae6d8cd4dfe524a43c05219
+                    "emotion": {"primary_expression": "UNAVAILABLE", "confidence": 0.0, "model_status": "OFFLINE", "available": False, "is_available": False}
                 }
 
             if face_info["match"].get("face_match"):
@@ -302,13 +292,9 @@ class SurveillanceVisionPipeline:
                 "identity_status": identity_status,
                 "face_match": face_info["match"],
                 "landmarks": face_info.get("landmarks", []),
-<<<<<<< HEAD
                 "emotion": emotion_data,
                 "expression": expr_label,
                 "expression_confidence": round(expr_conf, 1),
-=======
-                "emotion": face_info.get("emotion", {"primary_expression": "UNAVAILABLE", "confidence": 0.0, "model_status": "OFFLINE", "is_available": False}),
->>>>>>> 4a6833b02d4cadc50ae6d8cd4dfe524a43c05219
                 "hud_label": f"PERSON {tid} [{p_trk['confidence_pct']:.0f}%] | {p_trk['direction']}",
                 "hud_name": hud_name,
             }
@@ -744,19 +730,17 @@ class SurveillanceVisionPipeline:
             # Facial expression (Observation ONLY — NEVER a security threat by itself)
             has_face_det = bool(pt.get("has_face", False))
             emotion_obj = pt.get("emotion", {})
-<<<<<<< HEAD
-            expr_name = (emotion_obj.get("primary_expression") or "NOT AVAILABLE").upper() if has_face_det else "NOT AVAILABLE"
+            expr_name = (emotion_obj.get("primary_expression") or "UNAVAILABLE").upper() if has_face_det else "NOT AVAILABLE"
             expr_conf = float(emotion_obj.get("confidence", 0.0)) if has_face_det else 0.0
-=======
-            expr_name = (emotion_obj.get("primary_expression") or "UNAVAILABLE").upper()
-            expr_conf = float(emotion_obj.get("confidence", 0.0) or 0.0)
-            if expr_name in ("UNAVAILABLE", "MODEL_OFFLINE", "N/A") or expr_conf <= 0:
+            expression_is_available = bool(emotion_obj.get("available", emotion_obj.get("is_available", False)))
+            if not has_face_det:
+                expression_display = "NOT AVAILABLE"
+            elif not expression_is_available or expr_name in ("UNAVAILABLE", "MODEL_OFFLINE", "N/A"):
                 expression_display = "UNAVAILABLE"
             elif expr_conf < 35.0:
                 expression_display = "UNCERTAIN"
             else:
                 expression_display = expr_name
->>>>>>> 4a6833b02d4cadc50ae6d8cd4dfe524a43c05219
 
             # 5. Explainable Risk Engine (0 - 100) — Dynamic from actual observable signals
             base_presence_pts = int(round(8 + min(5.0, float(pt.get("detection_confidence", 80.0)) / 22.0)))
@@ -866,22 +850,12 @@ class SurveillanceVisionPipeline:
             else:
                 face_card_status = "NOT DETECTED | NO MATCH"
 
-<<<<<<< HEAD
-            expression_display = (
-                f"{expr_name} ({expr_conf:.0f}%)"
-                if has_face_det and expr_name != "NOT AVAILABLE"
-                else "NOT AVAILABLE"
-            )
-
-            # Build structured PERSON INFORMATION / ACTIVITY CARD (Section 7)
-=======
-            # Build structured PERSON ACTIVITY CARD (Requirement 5)
             expression_text = (
-                "UNAVAILABLE"
-                if expression_display == "UNAVAILABLE"
+                expression_display
+                if expression_display in ("UNAVAILABLE", "NOT AVAILABLE")
                 else f"{expression_display} ({expr_conf:.0f}%)"
             )
->>>>>>> 4a6833b02d4cadc50ae6d8cd4dfe524a43c05219
+            # Build structured PERSON INFORMATION / ACTIVITY CARD (Section 7)
             pt["activity_card"] = {
                 "person_id": f"PERSON #{tid}",
                 "track_id": tid,
@@ -898,19 +872,15 @@ class SurveillanceVisionPipeline:
                 "dwell_seconds": round(dwell, 1),
                 "face": "DETECTED" if has_face_det else "NOT DETECTED",
                 "face_status": face_card_status,
-<<<<<<< HEAD
                 "identity_status": pt.get("identity_status", "NO MATCH"),
-                "expression": expr_name,
+                "expression": expression_display,
                 "expression_confidence": round(expr_conf, 1),
-                "expression_display": expression_display,
+                "expression_display": expression_text,
                 "facial_signal_note": (
-                    f"FACIAL SIGNAL: {expr_name} ({expr_conf:.0f}%) | SECURITY RISK: {pt['risk_level']} ({primary_reason})"
+                    f"FACIAL SIGNAL: {expression_text} | SECURITY RISK: {pt['risk_level']} ({primary_reason})"
                     if has_face_det
                     else "FACE NOT DETECTED"
                 ),
-=======
-                "expression": expression_text,
->>>>>>> 4a6833b02d4cadc50ae6d8cd4dfe524a43c05219
                 "behavioral_signals": behavioral_signals,
                 "risk": pt["risk_level"],
                 "risk_score": risk_score,

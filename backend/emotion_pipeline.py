@@ -124,13 +124,6 @@ class EmotionClassifier:
             self.net.setInput(blob)
             logits = self.net.forward()[0]  # shape (8,)
 
-<<<<<<< HEAD
-                # Softmax calculation with numerical stability
-                exp_logits = np.exp(logits - np.max(logits))
-                probs = exp_logits / np.sum(exp_logits)
-            else:
-                return self._default_result()
-=======
             if logits.size == 0 or not np.all(np.isfinite(logits)):
                 return self._default_result()
 
@@ -140,7 +133,6 @@ class EmotionClassifier:
             if not np.isfinite(sum_exp) or sum_exp <= 0.0:
                 return self._default_result()
             probs = exp_logits / sum_exp
->>>>>>> 4a6833b02d4cadc50ae6d8cd4dfe524a43c05219
 
             # Build probability map
             distribution = {label: float(round(p * 100, 1)) for label, p in zip(EMOTION_LABELS, probs)}
@@ -174,14 +166,9 @@ class EmotionClassifier:
             "primary_expression": "UNAVAILABLE",
             "confidence": 0.0,
             "label": "UNAVAILABLE",
-<<<<<<< HEAD
             "available": False,
             "threat_profile": {"level": "OFFLINE", "status": "UNAVAILABLE", "color": "#64748b", "is_threat": False},
-            "distribution": {label: 0.0 for label in EMOTION_LABELS}
-=======
-            "threat_profile": {"level": "LOW", "status": "MODEL_OFFLINE", "color": "#94a3b8", "is_threat": False},
             "distribution": {label: 0.0 for label in EMOTION_LABELS},
             "model_status": "OFFLINE",
             "is_available": False,
->>>>>>> 4a6833b02d4cadc50ae6d8cd4dfe524a43c05219
         }
