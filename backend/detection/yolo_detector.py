@@ -131,6 +131,7 @@ DEFAULT_MODEL_NAME = os.getenv("YOLO_MODEL", "yolov8n.pt")
 DEFAULT_CONFIDENCE = float(os.getenv("YOLO_CONFIDENCE", "0.40"))
 DEFAULT_IMGSZ = int(os.getenv("YOLO_IMGSZ", "640"))
 WEAPON_MODEL_PATH = os.getenv("WEAPON_MODEL_PATH", "").strip()
+CUSTOM_OBJECT_MODEL_PATH = os.getenv("CUSTOM_OBJECT_MODEL_PATH", "").strip()
 
 
 class YoloDetector:
@@ -140,8 +141,10 @@ class YoloDetector:
     Detects all 80 COCO classes with risk classification:
       - person, bicycle, car, truck, bus, motorcycle, boat, airplane, train
       - backpack, umbrella, handbag, suitcase, bottle, cup, etc.
-      - laptop, cell phone, keyboard, mouse, tv, book, chair, clock
+      - laptop, cell phone, keyboard, mouse, tv, book, chair, clock, scissors
 
+    Custom object model (e.g., pen, radio, tactical gear): Configurable via
+    CUSTOM_OBJECT_MODEL_PATH; never fabricates unsupported classes when not loaded.
     Weapon detection: Configurable via WEAPON_MODEL_PATH; defaults to
     NOT CONFIGURED when no dedicated weapon model is present.
     """
@@ -154,6 +157,7 @@ class YoloDetector:
         camera_id: str = "CAM-01",
         conf_thresh: Optional[float] = None,
         weapon_model_path: Optional[str] = None,
+        custom_object_model_path: Optional[str] = None,
         **kwargs
     ):
         self.camera_id = camera_id
@@ -164,11 +168,15 @@ class YoloDetector:
         self.weapon_model_path = (weapon_model_path or WEAPON_MODEL_PATH).strip()
         self.weapon_model = None
         self.weapon_ready = False
+        self.custom_object_model_path = (custom_object_model_path or CUSTOM_OBJECT_MODEL_PATH).strip()
+        self.custom_object_model = None
+        self.custom_object_ready = False
         self.device = "cpu"
         self.model = None
 
         self._init_device()
         self._load_model()
+        self._load_optional_models()
 
     def _init_device(self):
         """Detects whether GPU/CUDA is available, defaulting gracefully to CPU."""
@@ -178,6 +186,28 @@ class YoloDetector:
         else:
             self.device = "cpu"
             logger.info("[*] Running YOLO detector in CPU MODE.")
+
+    def _load_optional_models(self):
+        """Loads optional specialized weapon or custom everyday object YOLO models if configured."""
+        if not _ULTRALYTICS_AVAILABLE:
+            return
+        if self.weapon_model_path and os.path.exists(self.weapon_model_path):
+            try:
+                self.weapon_model = YOLO(self.weapon_model_path)
+                self.weapon_ready = True
+                logger.info(f"[+] Dedicated weapon detection model loaded: {self.weapon_model_path}")
+            except Exception as e:
+                logger.warning(f"[!] Could not load weapon model '{self.weapon_model_path}': {e}")
+                self.weapon_ready = False
+
+        if self.custom_object_model_path and os.path.exists(self.custom_object_model_path):
+            try:
+                self.custom_object_model = YOLO(self.custom_object_model_path)
+                self.custom_object_ready = True
+                logger.info(f"[+] Custom object model loaded: {self.custom_object_model_path}")
+            except Exception as e:
+                logger.warning(f"[!] Could not load custom object model '{self.custom_object_model_path}': {e}")
+                self.custom_object_ready = False
 
     def _load_model(self):
         """Loads Ultralytics YOLO model from disk or cache."""
@@ -316,6 +346,72 @@ class YoloDetector:
                     "cls_id": cls_id,
                 })
 
+            # Optional custom everyday object model (e.g., pen, radio) if configured
+            if self.custom_object_ready and self.custom_object_model is not None:
+                try:
+                    c_res = self.custom_object_model.predict(
+                        source=frame_bgr, conf=conf_thresh, imgsz=self.imgsz, device=self.device, verbose=False
+                    )
+                    if c_res and len(c_res) > 0 and c_res[0].boxes is not None:
+                        for box in c_res[0].boxes:
+                            cls_id = int(box.cls[0].item())
+                            cname = str(self.custom_object_model.names.get(cls_id, f"custom_{cls_id}")).lower()
+                            conf = float(box.conf[0].item())
+                            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                            x1, y1 = max(0, min(int(x1), w - 1)), max(0, min(int(y1), h - 1))
+                            x2, y2 = max(0, min(int(x2), w)), max(0, min(int(y2), h))
+                            bw, bh = x2 - x1, y2 - y1
+                            if bw >= 4 and bh >= 4:
+                                detections.append({
+                                    "class": cname,
+                                    "class_name": cname,
+                                    "category": "object",
+                                    "confidence": round(conf, 3),
+                                    "confidence_pct": round(conf * 100, 1),
+                                    "bbox": [x1, y1, bw, bh],
+                                    "normalized_box": [round(x1 / w, 4), round(y1 / h, 4), round(bw / w, 4), round(bh / h, 4)],
+                                    "center": (int(x1 + bw / 2.0), int(y1 + bh / 2.0)),
+                                    "camera_id": cam_id,
+                                    "timestamp": timestamp,
+                                    "risk_level": "NORMAL",
+                                    "cls_id": 1000 + cls_id,
+                                })
+                except Exception as e:
+                    logger.debug(f"Custom object model inference error: {e}")
+
+            # Optional dedicated security/weapon model if configured
+            if self.weapon_ready and self.weapon_model is not None:
+                try:
+                    w_res = self.weapon_model.predict(
+                        source=frame_bgr, conf=max(0.55, conf_thresh), imgsz=self.imgsz, device=self.device, verbose=False
+                    )
+                    if w_res and len(w_res) > 0 and w_res[0].boxes is not None:
+                        for box in w_res[0].boxes:
+                            cls_id = int(box.cls[0].item())
+                            cname = str(self.weapon_model.names.get(cls_id, f"weapon_{cls_id}")).lower()
+                            conf = float(box.conf[0].item())
+                            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                            x1, y1 = max(0, min(int(x1), w - 1)), max(0, min(int(y1), h - 1))
+                            x2, y2 = max(0, min(int(x2), w)), max(0, min(int(y2), h))
+                            bw, bh = x2 - x1, y2 - y1
+                            if bw >= 4 and bh >= 4:
+                                detections.append({
+                                    "class": cname,
+                                    "class_name": cname,
+                                    "category": "security_object",
+                                    "confidence": round(conf, 3),
+                                    "confidence_pct": round(conf * 100, 1),
+                                    "bbox": [x1, y1, bw, bh],
+                                    "normalized_box": [round(x1 / w, 4), round(y1 / h, 4), round(bw / w, 4), round(bh / h, 4)],
+                                    "center": (int(x1 + bw / 2.0), int(y1 + bh / 2.0)),
+                                    "camera_id": cam_id,
+                                    "timestamp": timestamp,
+                                    "risk_level": "CRITICAL",
+                                    "cls_id": 2000 + cls_id,
+                                })
+                except Exception as e:
+                    logger.debug(f"Weapon model inference error: {e}")
+
             return detections
 
         except Exception as e:
@@ -334,4 +430,6 @@ class YoloDetector:
             "all_classes": [info[0] for info in TARGET_CLASSES.values()],
             "weapon_detection": "ACTIVE" if self.weapon_ready else "NOT CONFIGURED",
             "weapon_model": self.weapon_model_path if self.weapon_ready else None,
+            "custom_object_detection": "ACTIVE" if self.custom_object_ready else "NOT CONFIGURED",
+            "custom_object_model": self.custom_object_model_path if self.custom_object_ready else None,
         }

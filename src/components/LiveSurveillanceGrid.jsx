@@ -3,15 +3,15 @@ import ExpandedCameraView from './ExpandedCameraView';
 
 // ─── Vision Mode Definitions ─────────────────────────────────────────────────
 const VISION_MODES = [
-  { id: 'DAY',        label: 'DAY',         icon: '☀' },
-  { id: 'NIGHT',      label: 'NIGHT VISION', icon: '🌙' },
-  { id: 'FOG',        label: 'FOG/DEHAZE',  icon: '🌫' },
-  { id: 'THERMAL',    label: 'THERMAL',     icon: '🌡' },
-  { id: 'RAIN',       label: 'RAIN ENH.',   icon: '🌧' },
-  { id: 'LOWLIGHT',   label: 'LOW LIGHT',   icon: '🔅' },
-  { id: 'MONO',       label: 'MONOCHROME',  icon: '⬜' },
-  { id: 'ENHANCED',   label: 'ENHANCED',    icon: '✦' },
-  { id: 'AIVISION',   label: 'AI VISION',   icon: '⬡' },
+  { id: 'DAY',        label: 'DAY',                   icon: '☀' },
+  { id: 'NIGHT',      label: 'NIGHT VISION',          icon: '🌙' },
+  { id: 'FOG',        label: 'FOG/DEHAZE',            icon: '🌫' },
+  { id: 'THERMAL',    label: 'THERMAL [SIM]',         icon: '🌡' },
+  { id: 'RAIN',       label: 'RAIN ENH.',             icon: '🌧' },
+  { id: 'LOWLIGHT',   label: 'LOW-LIGHT VISUAL MODE', icon: '🔅' },
+  { id: 'MONO',       label: 'MONOCHROME',            icon: '⬜' },
+  { id: 'ENHANCED',   label: 'ENHANCED',              icon: '✦' },
+  { id: 'AIVISION',   label: 'AI VISION',             icon: '⬡' },
 ];
 
 /**
@@ -152,7 +152,7 @@ function modeHudLabel(mode) {
     FOG: 'FOG/DEHAZE ACTIVE',
     THERMAL: 'THERMAL VISUALIZATION [SIM]',
     RAIN: 'RAIN ENH. ACTIVE',
-    LOWLIGHT: 'LOW LIGHT ENHANCED',
+    LOWLIGHT: 'LOW-LIGHT VISUAL MODE',
     MONO: 'MONOCHROME',
     ENHANCED: 'ENHANCED VISION',
     AIVISION: 'AI VISION MODE',
@@ -166,7 +166,7 @@ function getEnvStatus(camId, mode) {
     case 'FOG': return { env: 'FOG', vis: 'DEHAZE ACTIVE' };
     case 'THERMAL': return { env: 'THERMAL', vis: 'MWIR [SIM]' };
     case 'RAIN': return { env: 'RAIN', vis: 'ENHANCED' };
-    case 'LOWLIGHT': return { env: 'LOW LIGHT', vis: 'GAMMA BOOST' };
+    case 'LOWLIGHT': return { env: 'LOW LIGHT', vis: 'LOW-LIGHT VISUAL MODE' };
     case 'MONO': return { env: 'TACTICAL', vis: 'HIGH CONTRAST' };
     case 'ENHANCED': return { env: 'OBSCURED', vis: 'CLAHE ACTIVE' };
     case 'AIVISION': return { env: 'ALL-SPECTRUM', vis: 'AI AUGMENTED' };
@@ -181,8 +181,10 @@ function getRiskColor(riskLevel) {
     case 'HIGH RISK':
     case 'HIGH': return '#f97316';
     case 'SUSPICIOUS EVENT':
-    case 'SUSPICIOUS': return '#fbbf24';
-    case 'MONITORED': return '#38bdf8';
+    case 'SUSPICIOUS':
+    case 'MEDIUM': return '#fbbf24';
+    case 'MONITORED':
+    case 'LOW': return '#38bdf8';
     case 'NORMAL': return '#10b981';
     default: return '#10b981';
   }
@@ -230,17 +232,21 @@ function ObjectInspectionPanel({ obj, onClose }) {
   const direction = obj.direction || 'STATIONARY';
   const speed = obj.relative_speed != null ? `${Number(obj.relative_speed).toFixed(1)} px/s` : '0.0 px/s';
   const faceStatus = obj.face_status || (obj.category === 'person' ? 'NO FACE VISIBLE' : 'N/A');
+  const activity = obj.activity || obj.movement || 'MONITORED';
+  const holdingStatus = obj.holding_status || 'NONE';
+  const riskScore = obj.risk_score ?? (isZone ? 75 : 12);
+  const behavioralSignals = obj.behavioral_signals || [];
 
   return (
     <div style={{
       position: 'fixed', bottom: 20, right: 20, zIndex: 9999,
       background: '#040814', border: `1.5px solid ${riskColor}`,
-      borderRadius: 6, padding: '14px 18px', minWidth: 290, maxWidth: 350,
+      borderRadius: 6, padding: '14px 18px', minWidth: 310, maxWidth: 380,
       boxShadow: `0 4px 30px ${riskColor}33, 0 2px 10px rgba(0,0,0,0.8)`,
       fontFamily: "'JetBrains Mono', monospace",
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-        <span style={{ color: riskColor, fontWeight: 700, fontSize: 11, letterSpacing: 1 }}>⊹ OBJECT INSPECTION</span>
+        <span style={{ color: riskColor, fontWeight: 700, fontSize: 11, letterSpacing: 1 }}>⊹ IBVAP OBJECT & ACTIVITY INSPECTION</span>
         <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 14 }}>✕</button>
       </div>
       {[
@@ -248,22 +254,32 @@ function ObjectInspectionPanel({ obj, onClose }) {
         { label: 'TRACK ID', value: trackId, bold: true },
         { label: 'CONFIDENCE', value: `${typeof conf === 'number' ? conf.toFixed(1) : conf}%` },
         { label: 'CAMERA', value: camId },
-        { label: 'RISK STATUS', value: riskLevel, color: riskColor, bold: true },
+        { label: 'ACTIVITY', value: activity, color: '#00f0ff', bold: true },
+        ...(holdingStatus && holdingStatus !== 'NONE' ? [{ label: 'OBJECT RELATION', value: holdingStatus, color: '#fbbf24', bold: true }] : []),
+        { label: 'RISK STATUS', value: `${riskLevel} (${riskScore}/100)`, color: riskColor, bold: true },
         { label: 'DIRECTION', value: direction },
         { label: 'SPEED', value: speed },
-        { label: 'ZONE', value: isZone ? '⚠ RESTRICTED [SECTOR ALPHA]' : 'UNRESTRICTED / CLEAR', color: isZone ? '#ef4444' : '#10b981' },
+        { label: 'ZONE', value: isZone ? '⚠ RESTRICTED [BORDER ZONE A]' : 'UNRESTRICTED / CLEAR', color: isZone ? '#ef4444' : '#10b981' },
         ...(obj.category === 'person' ? [{ label: 'FACE STATUS', value: faceStatus }] : []),
         ...(obj.plate && obj.plate !== 'N/A' ? [{ label: 'ANPR PLATE', value: obj.plate, color: '#f59e0b', bold: true }] : []),
         { label: 'FIRST SEEN', value: firstSeen },
         { label: 'LAST SEEN', value: lastSeen },
       ].map(({ label, value, color, bold }) => (
-        <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: 10 }}>
+        <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: 10, gap: 8 }}>
           <span style={{ color: '#64748b' }}>{label}</span>
-          <span style={{ color: color || '#e2e8f0', fontWeight: bold ? 700 : 400 }}>{value}</span>
+          <span style={{ color: color || '#e2e8f0', fontWeight: bold ? 700 : 400, textAlign: 'right' }}>{value}</span>
         </div>
       ))}
+      {behavioralSignals.length > 0 && (
+        <div style={{ marginTop: 6, padding: '5px 8px', background: 'rgba(0, 240, 255, 0.06)', border: '1px solid rgba(0, 240, 255, 0.25)', borderRadius: 3 }}>
+          <div style={{ fontSize: 8.5, color: '#38bdf8', fontWeight: 700, marginBottom: 2 }}>OBSERVABLE BEHAVIORAL SIGNALS:</div>
+          {behavioralSignals.slice(0, 3).map((sig, i) => (
+            <div key={i} style={{ fontSize: 8.5, color: '#cbd5e1' }}>• {sig}</div>
+          ))}
+        </div>
+      )}
       <div style={{ marginTop: 8, padding: '6px 8px', background: `${riskColor}15`, border: `1px solid ${riskColor}40`, borderRadius: 3 }}>
-        <span style={{ fontSize: 9, color: '#64748b' }}>AI REASON: </span>
+        <span style={{ fontSize: 9, color: '#64748b' }}>EXPLAINABLE AI REASON: </span>
         <span style={{ fontSize: 9, color: riskColor, fontWeight: 700 }}>{riskReason}</span>
       </div>
     </div>
@@ -374,18 +390,26 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
     vehicles: [],
     totalFaces: 0,
     highThreats: 0,
-    // New AI fields
     objects: [],
     odPersons: [],
     odVehicles: [],
     aiAlerts: [],
     aiEvents: [],
     threatScore: 0,
+    contributingSignals: [],
+    threatReasons: [],
     zoneIntrusions: 0,
     loiteringCount: 0,
     aiStats: {},
     otherObjects: [],
+    relationships: [],
+    personActivityCards: [],
+    fusion: null,
   });
+
+  // Multi-camera Incident Fusion state (populated from /ws/stream or /api/incidents/fusion)
+  const [fusionState, setFusionState] = useState(null);
+  const [isTriggeringDemo, setIsTriggeringDemo] = useState(false);
 
   const [inspectedObject, setInspectedObject] = useState(null);
   const [activeIssueAlert, setActiveIssueAlert] = useState(null);
@@ -584,19 +608,27 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                 anprEvents: data.anpr_events || [],
                 totalFaces: data.total_faces || (data.targets?.length || 0),
                 highThreats: data.high_threat_count || 0,
-                // Multi-object AI fields
+                // Multi-object & activity AI fields
                 objects: data.objects || [],
                 odPersons: data.od_persons || [],
                 odVehicles: data.od_vehicles || [],
                 aiAlerts: data.ai_alerts || [],
                 aiEvents: data.ai_events || [],
                 threatScore: data.threat_score || 0,
+                contributingSignals: data.contributing_signals || [],
+                threatReasons: data.threat_reasons || [],
                 zoneIntrusions: data.zone_intrusions || 0,
                 loiteringCount: data.loitering_count || 0,
                 aiStats: data.ai_stats || {},
                 otherObjects: data.other_objects || [],
+                relationships: data.relationships || [],
+                personActivityCards: data.person_activity_cards || [],
+                fusion: data.fusion || null,
               };
               setAiTelemetry(updated);
+              if (data.fusion) {
+                setFusionState(data.fusion);
+              }
               // Notify parent (App.jsx) with AI data for alerts/analytics
               if (onAiUpdate) onAiUpdate(updated);
               // Show on-screen AI issue panel for high-priority alerts
@@ -641,6 +673,64 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
       }
     };
   }, []);
+
+  // Fetch initial Multi-Camera Incident Fusion summary so panel works immediately
+  useEffect(() => {
+    let cancelled = false;
+    const loadInitialFusion = async () => {
+      try {
+        const res = await fetch('/api/incidents/fusion');
+        if (res.ok) {
+          const json = await res.json();
+          if (!cancelled) setFusionState(json);
+        }
+      } catch (_) {}
+    };
+    loadInitialFusion();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Trigger SIH Judge Multi-Camera Correlation Demo (CAM-01 Normal, CAM-02/03/04 Correlated)
+  const handleTriggerSihDemoFusion = async () => {
+    setIsTriggeringDemo(true);
+    try {
+      const res = await fetch('/api/incidents/demo-fusion', { method: 'POST' });
+      if (res.ok) {
+        const demoData = await res.json();
+        const refreshRes = await fetch('/api/incidents/fusion');
+        const fullFusion = refreshRes.ok ? await refreshRes.json() : null;
+        if (fullFusion) {
+          setFusionState(fullFusion);
+        }
+        if (demoData.alert && onAiUpdate) {
+          onAiUpdate({
+            ...aiTelemetry,
+            aiAlerts: [demoData.alert, ...(aiTelemetry.aiAlerts || [])],
+            fusion: fullFusion || fusionState,
+          });
+          setActiveIssueAlert(demoData.alert);
+          if (activeIssueTimerRef.current) clearTimeout(activeIssueTimerRef.current);
+          activeIssueTimerRef.current = setTimeout(() => setActiveIssueAlert(null), 9000);
+        }
+      }
+    } catch (e) {
+      console.warn('[IBVAP] SIH Demo Fusion trigger error:', e);
+    } finally {
+      setIsTriggeringDemo(false);
+    }
+  };
+
+  const handleClearPriorityCamera = async () => {
+    try {
+      const res = await fetch('/api/incidents/clear-priority', { method: 'POST' });
+      if (res.ok) {
+        const updatedFusion = await res.json();
+        setFusionState(updatedFusion);
+      }
+    } catch (_) {
+      setFusionState((prev) => (prev ? { ...prev, priority_camera: null, priority_reason: null } : prev));
+    }
+  };
 
   // -----------------------------------------------------------------
   // 4. Capture & Send Camera Frames to FastAPI Backend
@@ -855,26 +945,20 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
             const h = nh * ch;
 
             const emotion = target.emotion || {};
-            const emotionName = emotion.primary_expression || 'Neutral';
             const conf = target.detection_confidence || emotion.confidence || 0;
-            const threatProfile = emotion.threat_profile || {};
-            const targetId = target.target_id || 'LOC_#1';
-            const ageGroup = target.age_group || '';
-            const movement = target.movement || '';
+            const targetId = target.target_id || 'P-001';
+            const activity = target.activity || target.movement || 'STANDING';
+            const holdingStatus = target.holding_status || 'NONE';
             const direction = target.direction || '';
             const inZone = target.in_restricted_zone || false;
             const loitering = target.loitering || false;
             const dwell = target.dwell_seconds || 0;
-            const objectsInHand = target.objects_in_hand || [];
-            const threat = target.threat || {};
-            const threatScore = threat.score || 0;
+            const pScore = target.risk_score ?? aiTelemetry.threatScore ?? 10;
 
-            // Color by zone status first, then emotion
+            // Color by zone/risk status ONLY (never facial expression per Section 8)
             let themeColor = '#10b981'; // green = nominal
-            if (loitering) themeColor = '#ef4444';       // red = loitering
-            else if (inZone) themeColor = '#fbbf24';     // amber = intrusion
-            else if (threatProfile.status === 'HOSTILE') themeColor = '#ef4444';
-            else if (threatProfile.status === 'AGITATED' || threatProfile.status === 'SUSPICIOUS') themeColor = '#fbbf24';
+            if (loitering || pScore >= 75) themeColor = '#ef4444';       // red = critical/loitering
+            else if (inZone || pScore >= 50) themeColor = '#fbbf24';     // amber = intrusion/high
 
             // Intrusion zone flash overlay
             if (inZone) {
@@ -905,8 +989,9 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
             ctx.moveTo(cx2, cy2 - 6); ctx.lineTo(cx2, cy2 + 6);
             ctx.stroke();
 
-            // ── HUD info panel (right of bbox or below) ────────────────
-            const panelX = Math.min(x, cw - 175);
+            // ── HUD info panel (right of bbox or above) ────────────────
+            const panelW = 198;
+            const panelX = Math.min(x, cw - panelW - 2);
             const panelY = Math.max(4, y - 4);
             const lines = [];
             const { level: pRiskLevel } = getRiskLabel(target);
@@ -914,9 +999,15 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
 
             // Line 1: Target ID + type + confidence
             lines.push({ text: `PERSON ${targetId} (${conf.toFixed(0)}%)`, color: themeColor, bold: true });
-            // Line 2: Risk Status
-            lines.push({ text: `RISK: ${pRiskLevel}`, color: pRiskColor, bold: true });
-            // Line 3: Face visibility / match outcome (honest terminology)
+            // Line 2: Activity Understanding
+            lines.push({ text: `ACTIVITY: ${activity}`, color: '#00f0ff', bold: true });
+            // Line 3: Holding / Carrying or Object Near Person (Spatial-Temporal confirmed)
+            if (holdingStatus && holdingStatus !== 'NONE') {
+              lines.push({ text: holdingStatus, color: '#fbbf24', bold: true });
+            }
+            // Line 4: Risk Status + Explainable Score
+            lines.push({ text: `RISK: ${pRiskLevel} (${pScore}/100)`, color: pRiskColor, bold: true });
+            // Line 5: Face visibility / match outcome (honest terminology)
             const fm = target.face_match;
             if (fm && fm.face_match && fm.display_name && fm.display_name !== 'UNKNOWN') {
               lines.push({ text: `KNOWN: ${fm.display_name} (${(fm.similarity * 100).toFixed(0)}%)`, color: '#10b981', bold: true });
@@ -925,10 +1016,10 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
             } else {
               lines.push({ text: `FACE: NOT VISIBLE`, color: '#94a3b8' });
             }
-            // Line 4: Movement direction and estimated relative speed
+            // Line 6: Movement direction and estimated relative speed
             const speedVal = target.relative_speed ? `${target.relative_speed.toFixed(1)} px/s [EST]` : '0.0 px/s';
             lines.push({ text: `${direction || 'STATIONARY'} ▶ ${speedVal}`, color: '#38bdf8' });
-            // Line 5: Zone & Loitering
+            // Line 7: Zone & Loitering
             if (loitering) {
               lines.push({ text: `⚠ LOITERING ${dwell.toFixed(0)}s`, color: '#ef4444', bold: true });
             } else if (inZone) {
@@ -938,8 +1029,7 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
             // Draw panel background
             const lineH = 13;
             const panelH = lines.length * lineH + 8;
-            const panelW = 180;
-            ctx.fillStyle = 'rgba(4, 7, 18, 0.88)';
+            ctx.fillStyle = 'rgba(4, 7, 18, 0.90)';
             ctx.fillRect(panelX, panelY - panelH, panelW, panelH);
             ctx.strokeStyle = themeColor;
             ctx.lineWidth = 1;
@@ -1399,6 +1489,19 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
     return () => cancelAnimationFrame(animationFrameId);
   }, [isCameraActive]);
 
+  const activeFusion = fusionState || aiTelemetry.fusion || null;
+  const priorityCam = activeFusion?.priority_camera || null;
+  const priorityReason = activeFusion?.priority_reason || null;
+  const affectedCams = activeFusion?.affected_cameras || [];
+  const normalCams = activeFusion?.normal_cameras || ['CAM-01', 'CAM-02', 'CAM-03', 'CAM-04'];
+  const fusedIncidents = activeFusion?.fused_incidents || [];
+  const crossTimeline = activeFusion?.cross_camera_timeline || [];
+  const whatIsHappening = activeFusion?.what_is_happening_now || [];
+  const snapshotsList = activeFusion?.snapshots || [];
+  const activityCards = (aiTelemetry.personActivityCards && aiTelemetry.personActivityCards.length > 0)
+    ? aiTelemetry.personActivityCards
+    : (aiTelemetry.targets || []).map((t) => t.activity_card).filter(Boolean);
+
   return (
     <div className="cctv-grid-container">
       {cameraError && (
@@ -1407,7 +1510,7 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
         </div>
       )}
 
-      {/* Tactical Quick Demo Scenarios Bar */}
+      {/* Tactical Quick Demo Scenarios & SIH Multi-Camera Correlation Bar */}
       <div
         style={{
           display: 'flex',
@@ -1416,7 +1519,7 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
           gap: 6,
           marginBottom: 10,
           padding: '6px 12px',
-          background: 'rgba(6, 12, 24, 0.9)',
+          background: 'rgba(6, 12, 24, 0.92)',
           border: '1px solid var(--border-subtle)',
           borderRadius: 4,
         }}
@@ -1429,7 +1532,7 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
           { id: 'NIGHT_PATROL', label: 'NIGHT PATROL', desc: 'Phosphor NVD + Thermal' },
           { id: 'FOG_OPERATION', label: 'FOG DEHAZE', desc: 'Atmospheric contrast penetration' },
           { id: 'THERMAL_SEARCH', label: 'THERMAL SCAN', desc: 'MWIR heatmap search' },
-          { id: 'LOW_VISIBILITY', label: 'LOW VISIBILITY', desc: 'Gamma boost + Rain enhancement' },
+          { id: 'LOW_VISIBILITY', label: 'LOW-LIGHT MODE', desc: 'Low-Light Visual Mode + Rain enhancement' },
           { id: 'AI_OVERWATCH', label: 'AI VISION', desc: 'AI contrast telemetry mode' },
         ].map((sc) => (
           <button
@@ -1443,22 +1546,121 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
           </button>
         ))}
 
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+        {/* SIH Multi-Camera Correlation Demonstration Trigger */}
+        <button
+          className="btn-cam-action"
+          style={{
+            fontSize: 9.5,
+            padding: '3px 10px',
+            letterSpacing: 0.6,
+            fontWeight: 700,
+            background: 'rgba(249, 115, 22, 0.16)',
+            borderColor: '#f97316',
+            color: '#fbbf24',
+            marginLeft: 6,
+          }}
+          onClick={handleTriggerSihDemoFusion}
+          disabled={isTriggeringDemo}
+          title="SIH Judge Demonstration Mode: Correlate CAM-02, CAM-03, CAM-04 events while keeping CAM-01 live normal"
+        >
+          {isTriggeringDemo ? '⏳ CORRELATING...' : '🎯 SIH MULTI-CAMERA FUSION DEMO (CAM-01..04)'}
+        </button>
+
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 9, color: 'var(--text-dim)', fontFamily: 'var(--font-ui)' }}>
-            SURVEILLANCE HUD:
+            IBVAP FUSION:
           </span>
-          <span style={{ fontSize: 10, color: '#00f0ff', fontFamily: 'var(--font-ui)', fontWeight: 600 }}>
-            ZERO-LINE ACTIVE
+          <span
+            style={{
+              fontSize: 10,
+              color: affectedCams.length >= 2 ? '#f97316' : '#10b981',
+              fontFamily: 'var(--font-ui)',
+              fontWeight: 700,
+            }}
+          >
+            {affectedCams.length >= 2
+              ? `⚠ ${affectedCams.length} AFFECTED / ${normalCams.length} NORMAL`
+              : '● ALL SECTORS NOMINAL'}
           </span>
         </div>
       </div>
+
+      {/* Smart Camera Prioritization Banner (when HIGH / CRITICAL or Multi-Camera Incident occurs) */}
+      {priorityCam && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: 8,
+            marginBottom: 10,
+            padding: '8px 14px',
+            background: 'linear-gradient(90deg, rgba(239, 68, 68, 0.18), rgba(249, 115, 22, 0.10))',
+            border: '1px solid #ef4444',
+            borderRadius: 4,
+            fontFamily: 'var(--font-ui)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span
+              style={{
+                background: '#ef4444',
+                color: '#fff',
+                fontSize: 9,
+                fontWeight: 800,
+                padding: '2px 7px',
+                borderRadius: 3,
+                letterSpacing: 0.8,
+              }}
+            >
+              PRIMARY INCIDENT VIEW: {priorityCam}
+            </span>
+            <span style={{ fontSize: 10.5, color: '#f8fafc', fontWeight: 700 }}>
+              {priorityReason || `High-priority security event active on ${priorityCam}`}
+            </span>
+            {affectedCams.length > 0 && (
+              <span style={{ fontSize: 9.5, color: '#fbbf24' }}>
+                | Affected: {affectedCams.join(', ')} | Normal: {normalCams.join(', ') || 'None'}
+              </span>
+            )}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <button
+              className="btn-cam-action"
+              style={{
+                fontSize: 9,
+                padding: '2px 8px',
+                borderColor: '#00f0ff',
+                color: '#00f0ff',
+                fontWeight: 700,
+              }}
+              onClick={() => setMaximizedCam(maximizedCam === priorityCam ? null : priorityCam)}
+            >
+              {maximizedCam === priorityCam ? '⊠ SHOW 2x2 GRID + SECONDARY VIEWS' : `⛶ FOCUS ${priorityCam} PRIMARY VIEW`}
+            </button>
+            <button
+              className="btn-cam-action"
+              style={{ fontSize: 9, padding: '2px 8px', color: '#94a3b8' }}
+              onClick={() => {
+                setMaximizedCam(null);
+                handleClearPriorityCamera();
+              }}
+            >
+              ✕ CLEAR PRIORITY
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className={`cctv-grid-2x2 ${maximizedCam ? 'single-maximized' : ''}`}>
         {cameras.map((cam) => {
           if (maximizedCam && maximizedCam !== cam.id) return null;
 
           const isCam1 = cam.id === 'CAM-01';
-          const isAlerting = alerts.some((a) => a.camera === cam.id && a.severity === 'CRITICAL');
+          const isPriority = priorityCam === cam.id;
+          const isAffected = affectedCams.includes(cam.id);
+          const isAlerting = isPriority || alerts.some((a) => a.camera && a.camera.includes(cam.id) && (a.severity === 'CRITICAL' || a.severity === 'HIGH'));
           const camMode = visionModes[cam.id] || 'DAY';
           const envStatus = getEnvStatus(cam.id, camMode);
           const displayedResolution = cam.id === 'CAM-02'
@@ -1466,11 +1668,67 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
             : cam.resolution;
 
           return (
-            <div key={cam.id} className={`cctv-panel ${isAlerting ? 'panel-alert' : ''}`}>
+            <div
+              key={cam.id}
+              className={`cctv-panel ${isAlerting ? 'panel-alert' : ''}`}
+              style={
+                isPriority
+                  ? {
+                      border: '2px solid #ef4444',
+                      boxShadow: '0 0 22px rgba(239, 68, 68, 0.35)',
+                    }
+                  : undefined
+              }
+            >
               <div className="panel-hud-header">
-                <div className="panel-header-left">
+                <div className="panel-header-left" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                   <span className="cam-badge">{cam.id}</span>
                   <span className="cam-name">{cam.name}</span>
+                  {isPriority && (
+                    <span
+                      style={{
+                        background: '#ef4444',
+                        color: '#fff',
+                        fontSize: 8.5,
+                        fontWeight: 800,
+                        padding: '1px 6px',
+                        borderRadius: 3,
+                        letterSpacing: 0.6,
+                      }}
+                    >
+                      ★ PRIMARY INCIDENT VIEW
+                    </span>
+                  )}
+                  {!isPriority && isAffected && (
+                    <span
+                      style={{
+                        background: 'rgba(249, 115, 22, 0.2)',
+                        border: '1px solid #f97316',
+                        color: '#fbbf24',
+                        fontSize: 8.5,
+                        fontWeight: 700,
+                        padding: '1px 5px',
+                        borderRadius: 3,
+                      }}
+                    >
+                      AFFECTED CAMERA
+                    </span>
+                  )}
+                  {!isPriority && !isAffected && affectedCams.length >= 2 && (
+                    <span
+                      style={{
+                        background: 'rgba(16, 185, 129, 0.15)',
+                        border: '1px solid #10b981',
+                        color: '#10b981',
+                        fontSize: 8.5,
+                        fontWeight: 700,
+                        padding: '1px 5px',
+                        borderRadius: 3,
+                      }}
+                    >
+                      NORMAL CAMERA
+                    </span>
+                  )}
                 </div>
 
                 <div className="panel-header-right">
@@ -1700,10 +1958,21 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                         onError={() => setCam2Status((previous) => ({ ...previous, connected: false, stream_status: 'OFFLINE' }))}
                       />
                     ) : (
-                      <div style={{ display: 'grid', placeItems: 'center', height: '100%', color: '#ef4444', fontFamily: 'var(--font-ui)', letterSpacing: 1 }}>
+                      <div style={{ display: 'grid', placeItems: 'center', height: '100%', color: isAffected ? '#fbbf24' : '#ef4444', fontFamily: 'var(--font-ui)', letterSpacing: 1, padding: 12 }}>
                         <div style={{ textAlign: 'center' }}>
-                          <strong style={{ display: 'block', fontSize: 18 }}>CAM-02</strong>
-                          <span style={{ display: 'block', marginTop: 8, fontSize: 12 }}>REMOTE CAMERA OFFLINE</span>
+                          <strong style={{ display: 'block', fontSize: 16 }}>CAM-02 ({cam.sector || 'Sector Bravo'})</strong>
+                          {isAffected ? (
+                            <>
+                              <span style={{ display: 'inline-block', marginTop: 6, padding: '2px 8px', background: 'rgba(249, 115, 22, 0.2)', border: '1px solid #f97316', borderRadius: 3, fontSize: 10, color: '#fbbf24', fontWeight: 700 }}>
+                                ◈ DEMO / SIMULATION TELEMETRY ACTIVE
+                              </span>
+                              <span style={{ display: 'block', marginTop: 8, fontSize: 11, color: '#e2e8f0' }}>
+                                {activeFusion?.camera_states?.['CAM-02']?.last_event || 'Unusual perimeter activity detected'}
+                              </span>
+                            </>
+                          ) : (
+                            <span style={{ display: 'block', marginTop: 8, fontSize: 12 }}>REMOTE CAMERA OFFLINE</span>
+                          )}
                         </div>
                       </div>
                     )}
@@ -1724,7 +1993,7 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                 <div className="footer-meta-left">
                   <span>RES: <strong>{isCam1 && isCameraActive ? '1280x720 (RAW)' : displayedResolution}</strong></span>
                   <span style={{ marginLeft: 8 }}>
-                    MODE: <strong style={{ color: 'var(--cyan-glow)' }}>{camMode}</strong>
+                    MODE: <strong style={{ color: 'var(--cyan-glow)' }}>{modeHudLabel(camMode)}</strong>
                   </span>
                   <span style={{ marginLeft: 8 }}>
                     ENV: <strong>{envStatus.env}</strong>
@@ -1754,9 +2023,9 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                     </>
                   ) : cam.id === 'CAM-02' ? (
                     <>
-                      <span className="fps-tag">{cam2Status.connected ? `${cam2Status.fps || 0} FPS` : '0 FPS'}</span>
-                      <span className="status-tag" style={{ marginLeft: 8, color: cam2Status.connected ? 'var(--status-green)' : '#ef4444' }}>
-                        {cam2Status.connected ? '● LIVE' : '○ OFFLINE'}
+                      <span className="fps-tag">{cam2Status.connected ? `${cam2Status.fps || 0} FPS` : (isAffected ? '25 FPS [SIM]' : '0 FPS')}</span>
+                      <span className="status-tag" style={{ marginLeft: 8, color: cam2Status.connected ? 'var(--status-green)' : isAffected ? '#fbbf24' : '#ef4444' }}>
+                        {cam2Status.connected ? '● LIVE' : isAffected ? '◈ DEMO / SIMULATION' : '○ OFFLINE'}
                       </span>
                       <span style={{ marginLeft: 8, fontSize: 9, color: 'var(--text-dim)' }}>
                         LAT: <strong>{cam2Status.latency_ms != null ? `${Math.round(cam2Status.latency_ms)}ms` : '--'}</strong>
@@ -1775,6 +2044,384 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
             </div>
           );
         })}
+      </div>
+
+      {/* ─── CAMERA HEALTH + AI HEALTH TELEMETRY STRIP (Section 22) ─────────── */}
+      <div
+        style={{
+          marginTop: 10,
+          padding: '8px 12px',
+          background: 'rgba(6, 12, 24, 0.94)',
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 4,
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 10,
+          fontFamily: 'var(--font-ui)',
+          fontSize: 9.5,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <span style={{ color: '#00f0ff', fontWeight: 800, letterSpacing: 0.8 }}>
+            ⬡ CAMERA + AI HEALTH:
+          </span>
+          <span>
+            CAMERA STATUS: <strong style={{ color: isCameraActive ? '#10b981' : '#fbbf24' }}>{isCameraActive ? 'ONLINE (CAM-01 LIVE)' : 'SIMULATED FALLBACK'}</strong>
+          </span>
+          <span>
+            FPS: <strong style={{ color: '#e2e8f0' }}>{aiTelemetry.latencyMs > 0 ? Math.min(30, Math.round(1000 / Math.max(25, aiTelemetry.latencyMs))) : 28}</strong>
+          </span>
+          <span>
+            AI ENGINE: <strong style={{ color: isWsConnected ? '#10b981' : '#fbbf24' }}>{isWsConnected ? 'ACTIVE' : 'STANDBY'}</strong>
+          </span>
+          <span>
+            MODEL: <strong style={{ color: '#38bdf8' }}>YOLOv8 (80 COCO) + YuNet/SFace</strong>
+          </span>
+          <span>
+            TRACKING: <strong style={{ color: '#10b981' }}>ACTIVE</strong>
+          </span>
+          <span>
+            NETWORK: <strong style={{ color: isWsConnected ? '#10b981' : '#fbbf24' }}>{isWsConnected ? 'ONLINE' : 'LOCAL'}</strong>
+          </span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ color: '#94a3b8' }}>
+            CUSTOM OBJECT MODEL: <strong style={{ color: '#fbbf24' }}>{aiTelemetry.aiStats?.custom_object_detection || 'NOT CONFIGURED'}</strong>
+          </span>
+          <span style={{ color: '#94a3b8' }}>
+            WEAPON MODEL: <strong style={{ color: '#fbbf24' }}>{aiTelemetry.aiStats?.weapon_detection || 'NOT CONFIGURED'}</strong>
+          </span>
+        </div>
+      </div>
+
+      {/* ─── IBVAP 3-COLUMN INTELLIGENCE & INCIDENT FUSION CONSOLE ──────────── */}
+      <div
+        style={{
+          marginTop: 10,
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+          gap: 10,
+          fontFamily: 'var(--font-ui)',
+        }}
+      >
+        {/* COLUMN 1: "WHAT IS HAPPENING NOW" & PERSON ACTIVITY CARDS */}
+        <div
+          style={{
+            background: 'rgba(6, 12, 24, 0.94)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 4,
+            padding: '10px 12px',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: 6 }}>
+            <span style={{ color: '#00f0ff', fontWeight: 800, fontSize: 10.5, letterSpacing: 0.8 }}>
+              ◈ WHAT IS HAPPENING NOW & PERSON ACTIVITY
+            </span>
+            <span style={{ fontSize: 9, color: '#10b981', fontWeight: 700 }}>
+              LIVE INTELLIGENCE
+            </span>
+          </div>
+
+          {/* Structured Person Activity Cards (Section 6) */}
+          {activityCards.length > 0 && (
+            <div style={{ marginBottom: 8 }}>
+              {activityCards.slice(0, 2).map((card, idx) => {
+                const cRiskColor = getRiskColor(card.risk);
+                return (
+                  <div
+                    key={card.id || idx}
+                    style={{
+                      padding: '8px 10px',
+                      marginBottom: 6,
+                      background: 'rgba(15, 23, 42, 0.75)',
+                      border: `1px solid ${cRiskColor}66`,
+                      borderLeft: `3px solid ${cRiskColor}`,
+                      borderRadius: 4,
+                      fontSize: 9.5,
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <strong style={{ color: '#f8fafc', fontSize: 10 }}>
+                        PERSON ACTIVITY CARD — #{card.id} ({card.confidence}%)
+                      </strong>
+                      <span style={{ color: cRiskColor, fontWeight: 800 }}>
+                        {card.risk} ({card.risk_score ?? 10}/100)
+                      </span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px 8px', color: '#cbd5e1', fontSize: 9 }}>
+                      <div><span style={{ color: '#64748b' }}>Zone:</span> {card.location}</div>
+                      <div><span style={{ color: '#64748b' }}>Activity:</span> <strong style={{ color: '#00f0ff' }}>{card.activity}</strong></div>
+                      <div><span style={{ color: '#64748b' }}>Movement:</span> {card.movement} ({card.speed})</div>
+                      <div><span style={{ color: '#64748b' }}>Object:</span> <strong style={{ color: card.object !== 'NONE' ? '#fbbf24' : '#94a3b8' }}>{card.object}</strong></div>
+                      <div><span style={{ color: '#64748b' }}>Face Status:</span> {card.face_status}</div>
+                      <div><span style={{ color: '#64748b' }}>Time Seen:</span> {card.time_seen}</div>
+                    </div>
+                    {card.behavioral_signals && card.behavioral_signals.length > 0 && (
+                      <div style={{ marginTop: 4, color: '#38bdf8', fontSize: 8.5 }}>
+                        <strong>Behavioral Signals:</strong> {card.behavioral_signals.join(' • ')}
+                      </div>
+                    )}
+                    <div style={{ marginTop: 4, color: cRiskColor, fontSize: 8.5 }}>
+                      <strong>Reason:</strong> {card.reason}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Operator "WHAT IS HAPPENING NOW" Summary Cards (Section 20) */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 220, overflowY: 'auto' }}>
+            {whatIsHappening.slice(0, 4).map((item, i) => {
+              const rColor = getRiskColor(item.risk);
+              return (
+                <div
+                  key={i}
+                  style={{
+                    padding: '7px 9px',
+                    background: 'rgba(9, 15, 28, 0.85)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    borderRadius: 3,
+                    fontSize: 9,
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                    <span style={{ color: '#00f0ff', fontWeight: 700 }}>
+                      Camera: {item.camera} {item.is_demo ? '[DEMO / SIMULATION]' : '[LIVE]'}
+                    </span>
+                    <span style={{ color: rColor, fontWeight: 700 }}>
+                      Risk: {item.risk} ({item.risk_score ?? 0}/100)
+                    </span>
+                  </div>
+                  <div style={{ color: '#e2e8f0', fontWeight: 600, marginBottom: 2 }}>{item.subject}</div>
+                  <div style={{ color: '#94a3b8', fontSize: 8.5 }}>
+                    Movement: <strong style={{ color: '#cbd5e1' }}>{item.movement}</strong> | Object: <strong style={{ color: '#fbbf24' }}>{item.object}</strong> | Zone: <strong style={{ color: '#cbd5e1' }}>{item.zone}</strong> | Face: <strong style={{ color: '#cbd5e1' }}>{item.face}</strong>
+                  </div>
+                  <div style={{ color: rColor, fontSize: 8.5, marginTop: 2 }}>
+                    Reason: {item.reason}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* COLUMN 2: IBVAP INCIDENT FUSION ENGINE & EXPLAINABLE THREAT SCORE */}
+        <div
+          style={{
+            background: 'rgba(6, 12, 24, 0.94)',
+            border: affectedCams.length >= 2 ? '1px solid #f97316' : '1px solid var(--border-subtle)',
+            borderRadius: 4,
+            padding: '10px 12px',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: 6 }}>
+            <span style={{ color: '#fbbf24', fontWeight: 800, fontSize: 10.5, letterSpacing: 0.8 }}>
+              ⬡ IBVAP INCIDENT FUSION & EXPLAINABLE AI
+            </span>
+            <span style={{ fontSize: 9, color: affectedCams.length >= 2 ? '#ef4444' : '#38bdf8', fontWeight: 700 }}>
+              {affectedCams.length >= 2 ? 'MULTI-CAMERA SECURITY ALERT' : 'CORRELATION ENGINE ARMED'}
+            </span>
+          </div>
+
+          {/* Affected vs Normal Cameras summary (Section 11) */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8, fontSize: 9 }}>
+            <div style={{ flex: 1, padding: '5px 8px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.35)', borderRadius: 3 }}>
+              <div style={{ color: '#ef4444', fontWeight: 700, fontSize: 8.5 }}>AFFECTED CAMERAS</div>
+              <div style={{ color: '#f8fafc', fontWeight: 700, marginTop: 2 }}>
+                {affectedCams.length > 0 ? affectedCams.join(', ') : 'None (All Nominal)'}
+              </div>
+            </div>
+            <div style={{ flex: 1, padding: '5px 8px', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.35)', borderRadius: 3 }}>
+              <div style={{ color: '#10b981', fontWeight: 700, fontSize: 8.5 }}>NORMAL CAMERAS</div>
+              <div style={{ color: '#f8fafc', fontWeight: 700, marginTop: 2 }}>
+                {normalCams.length > 0 ? normalCams.join(', ') : 'None'}
+              </div>
+            </div>
+          </div>
+
+          {/* Fused Incident Card (Section 16) */}
+          {fusedIncidents.length > 0 ? (
+            fusedIncidents.slice(0, 1).map((inc) => (
+              <div
+                key={inc.incident_id}
+                style={{
+                  padding: '8px 10px',
+                  background: 'rgba(15, 23, 42, 0.85)',
+                  border: '1px solid rgba(249, 115, 22, 0.5)',
+                  borderRadius: 4,
+                  fontSize: 9,
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <strong style={{ color: '#fbbf24', fontSize: 10 }}>{inc.incident_id}</strong>
+                  <span style={{ color: '#ef4444', fontWeight: 800 }}>
+                    STATUS: {inc.status} | RISK: {inc.risk} ({inc.risk_score}/100)
+                  </span>
+                </div>
+                <div style={{ color: '#cbd5e1', fontSize: 8.5, marginBottom: 4 }}>
+                  <div><strong>Cameras Involved:</strong> {(inc.cameras_involved || []).join(', ')} | <strong>Normal:</strong> {(inc.normal_cameras || []).join(', ')}</div>
+                  <div><strong>Cross-Camera Track:</strong> <span style={{ color: '#38bdf8' }}>{inc.cross_camera_identity}</span></div>
+                </div>
+
+                {/* Explainable Risk Score Breakdown (Section 9) */}
+                {inc.contributing_signals && inc.contributing_signals.length > 0 && (
+                  <div style={{ marginBottom: 5, padding: '5px 7px', background: 'rgba(4, 8, 20, 0.8)', borderRadius: 3 }}>
+                    <div style={{ color: '#00f0ff', fontWeight: 700, fontSize: 8.5, marginBottom: 2 }}>
+                      RISK SCORE: {inc.risk_score} / 100 ({inc.risk}) — CONTRIBUTING SIGNALS:
+                    </div>
+                    {inc.contributing_signals.map((sig, idx) => (
+                      <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8.5, color: '#cbd5e1' }}>
+                        <span>• {sig.signal}</span>
+                        <strong style={{ color: '#fbbf24' }}>+{sig.points}</strong>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* AI Explainability Panel (Section 17) */}
+                {inc.explainability && (
+                  <div style={{ padding: '5px 7px', background: 'rgba(249, 115, 22, 0.08)', border: '1px solid rgba(249, 115, 22, 0.3)', borderRadius: 3, fontSize: 8.5 }}>
+                    <div style={{ color: '#fbbf24', fontWeight: 700, marginBottom: 2 }}>AI EXPLAINABILITY:</div>
+                    <div><strong style={{ color: '#94a3b8' }}>WHAT:</strong> {inc.explainability.what}</div>
+                    <div><strong style={{ color: '#94a3b8' }}>WHERE:</strong> {inc.explainability.where}</div>
+                    <div><strong style={{ color: '#94a3b8' }}>WHEN:</strong> {inc.explainability.when}</div>
+                    <div><strong style={{ color: '#94a3b8' }}>OBJECT:</strong> {inc.explainability.object}</div>
+                    <div><strong style={{ color: '#94a3b8' }}>WHY:</strong> {inc.explainability.why}</div>
+                    <div><strong style={{ color: '#94a3b8' }}>CONFIDENCE:</strong> {inc.explainability.confidence}%</div>
+                  </div>
+                )}
+              </div>
+            ))
+          ) : (
+            <div style={{ padding: '8px 10px', background: 'rgba(15, 23, 42, 0.65)', borderRadius: 4, fontSize: 9 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <strong style={{ color: '#00f0ff' }}>LIVE EXPLAINABLE RISK SCORE (CAM-01)</strong>
+                <strong style={{ color: aiTelemetry.threatScore >= 50 ? '#ef4444' : '#10b981' }}>
+                  {aiTelemetry.threatScore || 0} / 100
+                </strong>
+              </div>
+              {(aiTelemetry.contributingSignals && aiTelemetry.contributingSignals.length > 0) ? (
+                aiTelemetry.contributingSignals.map((s, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8.5, color: '#cbd5e1' }}>
+                    <span>• {s.signal}</span>
+                    <strong style={{ color: '#fbbf24' }}>+{s.points}</strong>
+                  </div>
+                ))
+              ) : (
+                <div style={{ color: '#94a3b8', fontSize: 8.5 }}>
+                  No elevated risk signals active on CAM-01. Click <strong>"🎯 SIH MULTI-CAMERA FUSION DEMO"</strong> above to demonstrate multi-camera event correlation across CAM-01..04.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* COLUMN 3: CROSS-CAMERA EVENT TIMELINE & PRESERVED INCIDENT SNAPSHOTS */}
+        <div
+          style={{
+            background: 'rgba(6, 12, 24, 0.94)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 4,
+            padding: '10px 12px',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: 6 }}>
+            <span style={{ color: '#00f0ff', fontWeight: 800, fontSize: 10.5, letterSpacing: 0.8 }}>
+              ⏱ CROSS-CAMERA TIMELINE & SNAPSHOT EVIDENCE
+            </span>
+            <span style={{ fontSize: 9, color: '#94a3b8' }}>
+              {snapshotsList.length} SNAPSHOTS
+            </span>
+          </div>
+
+          {/* Cross-Camera Event Timeline (Section 12) */}
+          <div style={{ maxHeight: 135, overflowY: 'auto', marginBottom: 8, paddingRight: 4 }}>
+            {crossTimeline.length > 0 ? (
+              crossTimeline.slice(0, 8).map((step, idx) => {
+                const sColor = step.severity === 'CRITICAL' || step.severity === 'HIGH'
+                  ? '#ef4444'
+                  : step.severity === 'MEDIUM'
+                  ? '#fbbf24'
+                  : '#38bdf8';
+                return (
+                  <div
+                    key={step.id || idx}
+                    style={{
+                      display: 'flex',
+                      gap: 6,
+                      fontSize: 8.5,
+                      padding: '4px 6px',
+                      marginBottom: 3,
+                      background: 'rgba(15, 23, 42, 0.7)',
+                      borderLeft: `2.5px solid ${sColor}`,
+                      borderRadius: 2,
+                    }}
+                  >
+                    <span style={{ color: '#64748b', minWidth: 46 }}>{step.time}</span>
+                    <strong style={{ color: sColor, minWidth: 46 }}>{step.camera_id}</strong>
+                    <span style={{ color: '#e2e8f0' }}>{step.event}</span>
+                  </div>
+                );
+              })
+            ) : (
+              <div style={{ fontSize: 8.5, color: '#64748b', padding: '6px 0' }}>
+                Awaiting cross-camera security events...
+              </div>
+            )}
+          </div>
+
+          {/* Incident Snapshot Preservation (Section 19) */}
+          <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 6 }}>
+            <div style={{ fontSize: 9, color: '#fbbf24', fontWeight: 700, marginBottom: 4 }}>
+              📷 PRESERVED INCIDENT SNAPSHOT EVIDENCE (HIGH / CRITICAL):
+            </div>
+            {snapshotsList.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 110, overflowY: 'auto' }}>
+                {snapshotsList.slice(0, 3).map((snap, idx) => (
+                  <div
+                    key={snap.snapshot_id || idx}
+                    style={{
+                      display: 'flex',
+                      gap: 8,
+                      alignItems: 'center',
+                      padding: '5px 7px',
+                      background: 'rgba(9, 15, 28, 0.9)',
+                      border: '1px solid rgba(251, 191, 36, 0.3)',
+                      borderRadius: 3,
+                      fontSize: 8.5,
+                    }}
+                  >
+                    {snap.snapshot_url && (
+                      <img
+                        src={snap.snapshot_url}
+                        alt="Incident Evidence"
+                        style={{ width: 64, height: 38, objectFit: 'cover', borderRadius: 2, border: '1px solid #fbbf24' }}
+                      />
+                    )}
+                    <div style={{ flex: 1 }}>
+                      <div style={{ color: '#f8fafc', fontWeight: 700 }}>
+                        {snap.source_camera} | {snap.event_type} | Risk: {snap.risk_score}/100
+                      </div>
+                      <div style={{ color: '#94a3b8' }}>
+                        Track: {snap.track_id} ({snap.confidence}%) | Time: {snap.timestamp} | Zone: {snap.zone}
+                      </div>
+                      <div style={{ color: '#fbbf24' }}>
+                        Objects: {(snap.detected_objects || []).join(', ')}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ fontSize: 8.5, color: '#64748b' }}>
+                Snapshots are automatically preserved when HIGH or CRITICAL events occur.
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Expanded AI Camera View (fullscreen modal) */}

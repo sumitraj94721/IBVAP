@@ -26,13 +26,13 @@ export const ConsoleLockOverlay = ({
     <div className="fixed inset-0 z-50 bg-[#0a0f13]/95 backdrop-blur-md flex items-center justify-center p-4 select-none">
       <div className="bg-surface-container-low border border-primary/40 w-full max-w-sm shadow-2xl p-6 text-center flex flex-col items-center">
         <img
-          alt="RAKSHAN IBVAP Tactical Crest"
+          alt="IBVAP Tactical Crest"
           className="h-16 w-16 mb-3 object-contain"
           src={CREST_LOGO_URL}
         />
 
         <div className="font-headline-md text-headline-md text-on-surface font-bold tracking-wider mb-1">
-          RAKSHAN CONSOLE LOCKED
+          IBVAP CONSOLE LOCKED
         </div>
         <div className="font-label-micro text-label-micro text-outline tracking-wider uppercase mb-6">
           INTELLIGENT BORDER VIDEO ANALYTICS PLATFORM • SEC-NODE HQ-NORTH-01

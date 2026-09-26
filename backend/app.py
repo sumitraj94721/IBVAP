@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.face_pipeline import SurveillanceVisionPipeline
+from backend.events.incident_fusion import IBVAPIncidentFusionEngine
 from backend.camera_streamer import OpenCVCameraStreamer, RemoteCameraStreamer
 from backend.stream_generators import stream_manager
 from backend.storage_sync import StorageSyncManager
@@ -44,9 +45,9 @@ os.makedirs(SNAPSHOT_DIR, exist_ok=True)
 
 # Initialize FastAPI App
 app = FastAPI(
-    title="RAKSHAN - AI Border Surveillance Command Center (SIH 26187)",
-    description="Real-time Multi-Object Border Video Analytics, Face Recognition & ANPR Platform",
-    version="2.0.0"
+    title="IBVAP — Intelligent Border Video Analytics Platform (SIH 2026)",
+    description="Real-time Multi-Camera Border Video Analytics, Activity Understanding, Face Recognition & ANPR Platform",
+    version="2.5.0"
 )
 
 # Enable CORS for frontend integration
@@ -65,8 +66,9 @@ app.include_router(auth_router)
 if os.path.exists(SNAPSHOT_DIR):
     app.mount("/static/snapshots", StaticFiles(directory=SNAPSHOT_DIR), name="snapshots")
 
-# Global Vision Pipeline & Camera Managers
+# Global Vision Pipeline, Multi-Camera Fusion Engine & Camera Managers
 pipeline = SurveillanceVisionPipeline(camera_id="CAM-01")
+fusion_engine = IBVAPIncidentFusionEngine(snapshot_dir=SNAPSHOT_DIR)
 storage = StorageSyncManager(project_root=PROJECT_ROOT)
 backend_camera: Optional[OpenCVCameraStreamer] = None
 edge_camera: Optional[OpenCVCameraStreamer] = None
@@ -116,11 +118,12 @@ async def broadcast_alert_to_clients(alert_payload: Dict[str, Any]):
 @app.get("/")
 async def serve_index():
     return {
-        "service": "IBVAP / RAKSHAN Command Center AI Backend",
+        "service": "IBVAP — Intelligent Border Video Analytics Platform Backend",
         "status": "OPERATIONAL",
         "yolo_detector": pipeline.yolo_detector.status(),
         "face_engine": "YuNet + SFace-128D (ONNX)",
         "anpr_pipeline": pipeline.plate_detector.status(),
+        "incident_fusion": "IBVAP Multi-Camera Correlation Engine ACTIVE",
         "frontend": "http://localhost:5173",
         "sih_code": "SIH 26187",
         "timestamp": time.time()
@@ -135,25 +138,27 @@ async def get_system_status():
     ocr_stat = pipeline.plate_ocr.status()
 
     return {
-        "system": "RAKSHAN — AI Border Surveillance Command Center",
+        "system": "IBVAP — Intelligent Border Video Analytics Platform",
         "code": "SIH 26187",
         "status": "OPERATIONAL",
         "analytics_enabled": pipeline.analytics_enabled,
         "models": {
-            "object_detector": f"Ultralytics YOLO ({yolo_stat.get('model', 'yolov8n.pt')})",
+            "object_detector": f"Ultralytics YOLO ({yolo_stat.get('model', 'yolov8n.pt')} - 80 COCO Classes)",
             "detector_device": yolo_stat.get("device", "cpu"),
             "detector_status": yolo_stat.get("status", "ONLINE"),
+            "custom_object_detection": yolo_stat.get("custom_object_detection", "NOT CONFIGURED"),
+            "weapon_detection": yolo_stat.get("weapon_detection", "NOT CONFIGURED"),
             "face_detector": "YuNet ONNX DNN",
             "face_recognizer": "SFace 128D ONNX Feature Extractor",
             "face_watchlist_count": len(pipeline.face_matcher.list_identities()),
             "anpr_detector": anpr_stat.get("status"),
             "anpr_ocr": ocr_stat.get("status"),
-            "emotion_classifier": "FER+ ResNet Deep Neural Net (ONNX Diagnostic)"
+            "emotion_classifier": "FER+ ResNet Deep Neural Net (ONNX Diagnostic - Non-Threat)"
         },
         "tracker": {
             "active_tracks_count": len(pipeline.tracker.tracks),
             "max_disappeared": pipeline.tracker.max_disappeared,
-            "classes": ["person", "car", "truck", "bus", "motorcycle", "bicycle"]
+            "classes": ["person", "car", "truck", "bus", "motorcycle", "bicycle", "everyday_objects (80 COCO)"]
         },
         "target_fps": "25-30 FPS",
         "timestamp": time.time()
@@ -362,7 +367,47 @@ async def set_zone_config(payload: Dict[str, Any]):
 
 
 # -----------------------------------------------------------------
-# 6. REST Analyze Frame Fallback
+# 6. Multi-Camera Intelligence & Incident Fusion APIs
+# -----------------------------------------------------------------
+
+@app.get("/api/incidents/fusion")
+async def get_incident_fusion_state():
+    """Returns current IBVAP multi-camera correlation state, timeline, snapshots, and 'What is happening now'."""
+    return fusion_engine.get_intelligence_summary()
+
+
+@app.post("/api/incidents/demo-fusion")
+async def trigger_sih_demo_fusion_endpoint():
+    """
+    Triggers the SIH Judge Demonstration Multi-Camera Correlation workflow:
+    Correlates CAM-02, CAM-03, CAM-04 while keeping CAM-01 normal,
+    raises MULTI-CAMERA SECURITY ALERT, and prioritizes CAM-03.
+    """
+    demo_result = fusion_engine.trigger_sih_demo_fusion()
+    if demo_result.get("alert"):
+        await broadcast_alert_to_clients({
+            "type": "alert_event",
+            "event": demo_result["alert"],
+            "timestamp": time.strftime("%H:%M:%S")
+        })
+    return demo_result
+
+
+@app.post("/api/incidents/clear-priority")
+async def clear_priority_camera_endpoint():
+    """Clears automatic primary incident camera prioritization override."""
+    fusion_engine.clear_priority_camera()
+    return fusion_engine.get_intelligence_summary()
+
+
+@app.get("/api/incidents/snapshots")
+async def get_incident_snapshots():
+    """Returns preserved HIGH/CRITICAL incident evidence snapshots."""
+    return {"snapshots": fusion_engine.snapshots}
+
+
+# -----------------------------------------------------------------
+# 6B. REST Analyze Frame Fallback
 # -----------------------------------------------------------------
 
 @app.post("/api/analyze-frame")
@@ -383,6 +428,7 @@ async def analyze_uploaded_frame(
     dt = (time.time() - t0) * 1000
     result["latency_ms"] = round(dt, 2)
     result["sync"] = storage.status()
+    result["fusion"] = fusion_engine.update_from_pipeline("CAM-01", result, frame_bgr=frame, latency_ms=dt)
     return result
 
 
@@ -448,6 +494,14 @@ async def websocket_video_stream(websocket: WebSocket):
 
                 latency_ms = round((time.time() - t_recv) * 1000, 1)
 
+                # Update Multi-Camera Incident Fusion Engine (also saves snapshots for HIGH/CRITICAL alerts)
+                fusion_state = fusion_engine.update_from_pipeline(
+                    camera_id=cam_id,
+                    analysis=analysis,
+                    frame_bgr=frame,
+                    latency_ms=latency_ms
+                )
+
                 # Broadcast new AI alerts to alerts WebSocket hub
                 new_alerts = analysis.get("ai_alerts", [])
                 if new_alerts:
@@ -494,11 +548,16 @@ async def websocket_video_stream(websocket: WebSocket):
                     "face_matches": analysis["face_matches"],
                     "anpr_events": analysis["anpr_events"],
                     "threat_score": analysis["threat_score"],
+                    "contributing_signals": analysis.get("contributing_signals", []),
+                    "threat_reasons": analysis.get("threat_reasons", []),
                     "zone_intrusions": analysis["zone_intrusions"],
                     "loitering_count": analysis["loitering_count"],
                     "sync": storage.status(),
                     "analytics_enabled": pipeline.analytics_enabled,
                     "other_objects": analysis.get("other_objects", []),
+                    "relationships": analysis.get("relationships", []),
+                    "person_activity_cards": analysis.get("person_activity_cards", []),
+                    "fusion": fusion_state,
                     "ai_stats": analysis["ai_stats"]
                 }
 
@@ -542,7 +601,7 @@ async def websocket_alerts_endpoint(websocket: WebSocket):
                 drill_alert = {
                     "id": f"ALT-{int(time.time() * 10) % 90000 + 10000}",
                     "severity": "CRITICAL",
-                    "title": "COMMAND DRILL: Perimeter Breach Simulated",
+                    "title": "COMMAND DRILL: Perimeter Breach Simulated [DEMO / SIMULATION]",
                     "camera": "CAM-01",
                     "sector": "Sector Alpha",
                     "targetId": "DRILL_#01",
@@ -550,6 +609,14 @@ async def websocket_alerts_endpoint(websocket: WebSocket):
                     "timestamp": time.strftime("%H:%M:%S"),
                     "status": "ACTIVE",
                     "description": "Tactical perimeter security drill initiated by Command Officer.",
+                    "explainability": {
+                        "what": "Command Drill Perimeter Breach Simulation",
+                        "where": "CAM-01 / Sector Alpha",
+                        "when": time.strftime("%H:%M:%S"),
+                        "object": "Simulated Drill Subject (DRILL_#01)",
+                        "why": "Manual Command Drill triggered by operator for response verification.",
+                        "confidence": 99
+                    },
                     "is_real_ai": False,
                     "is_demo": True
                 }
@@ -557,6 +624,13 @@ async def websocket_alerts_endpoint(websocket: WebSocket):
                     "type": "alert_event",
                     "event": drill_alert
                 })
+            elif data.get("action") == "trigger_sih_demo_fusion":
+                demo_res = fusion_engine.trigger_sih_demo_fusion()
+                if demo_res.get("alert"):
+                    await broadcast_alert_to_clients({
+                        "type": "alert_event",
+                        "event": demo_res["alert"]
+                    })
     except asyncio.TimeoutError:
         # Periodic heartbeat
         try:

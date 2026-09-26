@@ -329,7 +329,7 @@ export default function AiAnalyticsView({ threatLevel, kpiData, aiTelemetry }) {
             color: 'var(--text-main)',
             lineHeight: 1.7
           }}>
-            <strong style={{ color: 'var(--gold-commander)' }}>SIH 26187 / RAKSHAN UPGRADED PIPELINE:</strong>
+            <strong style={{ color: 'var(--gold-commander)' }}>SIH 2026 / IBVAP UPGRADED PIPELINE:</strong>
             <br />
             1. <strong>Ultralytics YOLOv8</strong> multi-class object detection (person, car, truck, bus, bike)
             <br />

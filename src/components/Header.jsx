@@ -45,8 +45,8 @@ export default function Header({ threatLevel, onLogout, isSirenActive, onToggleS
           <span>SIH 2026</span>
         </div>
         <div className="banner-title-group">
-          <h1>RAKSHAN — AI BORDER SURVEILLANCE COMMAND CENTER</h1>
-          <div className="sub">COMMAND CENTER DASHBOARD &amp; TACTICAL AI SURVEILLANCE GRID</div>
+          <h1>IBVAP — INTELLIGENT BORDER VIDEO ANALYTICS PLATFORM</h1>
+          <div className="sub">MULTI-CAMERA AI COMMAND CENTER &amp; BORDER INTELLIGENCE GRID</div>
         </div>
       </div>
 

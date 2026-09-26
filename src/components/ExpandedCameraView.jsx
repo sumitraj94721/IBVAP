@@ -199,6 +199,10 @@ export default function ExpandedCameraView({
             { text: `RISK: ${tag.level}`, color, bold: true },
           ];
           if (obj._renderType === 'person') {
+            lines.push({ text: `ACTIVITY: ${obj.activity || obj.movement || 'STANDING'}`, color: '#00f0ff', bold: true });
+            if (obj.holding_status && obj.holding_status !== 'NONE') {
+              lines.push({ text: obj.holding_status, color: '#fbbf24', bold: true });
+            }
             const fm = obj.face_match;
             if (fm && fm.face_match && fm.display_name && fm.display_name !== 'UNKNOWN') {
               lines.push({ text: `KNOWN: ${fm.display_name} (${(fm.similarity * 100).toFixed(0)}%)`, color: '#10b981', bold: true });
@@ -217,7 +221,7 @@ export default function ExpandedCameraView({
 
           const lineH = 15;
           const panelH = lines.length * lineH + 8;
-          const panelW = 215;
+          const panelW = 225;
           const px = Math.min(x, cw - panelW - 4);
           const py = Math.max(panelH + 4, y - 4);
 
@@ -452,6 +456,7 @@ export default function ExpandedCameraView({
               ['TRACKING', 'ACTIVE (IOU)'],
               ['OBJECTS', allObjects.length],
               ['ALERTS', alertCount],
+              ['CUSTOM OBJECT MODEL', aiTelemetry?.aiStats?.custom_object_detection || 'NOT CONFIGURED'],
               ['WEAPON DETECTION', weaponStatus],
               ['FACE RECOGNITION', 'YuNet + SFace'],
               ['ANPR', aiTelemetry?.aiStats?.anpr_status || 'STANDBY'],
@@ -521,7 +526,9 @@ export default function ExpandedCameraView({
                 ['TRACK ID', selectedObj.track_id || selectedObj.target_id || '--'],
                 ['CONFIDENCE', `${(selectedObj.confidence_pct ?? selectedObj.detection_confidence ?? selectedObj.confidence ?? 0).toFixed ? (selectedObj.confidence_pct ?? selectedObj.detection_confidence ?? selectedObj.confidence ?? 0).toFixed(1) : '--'}%`],
                 ['CAMERA', selectedObj.camera_id || cameraId],
-                ['RISK STATUS', tag.level],
+                ['ACTIVITY', selectedObj.activity || selectedObj.movement || 'MONITORED'],
+                ...(selectedObj.holding_status && selectedObj.holding_status !== 'NONE' ? [['OBJECT RELATION', selectedObj.holding_status]] : []),
+                ['RISK STATUS', `${tag.level} (${selectedObj.risk_score ?? 10}/100)`],
                 ['DIRECTION', selectedObj.direction || 'STATIONARY'],
                 ['SPEED', selectedObj.relative_speed != null ? `${Number(selectedObj.relative_speed).toFixed(1)} px/s` : '0.0 px/s'],
                 ['DWELL', selectedObj.dwell_seconds != null ? `${Number(selectedObj.dwell_seconds).toFixed(0)}s` : '0s'],
@@ -532,7 +539,7 @@ export default function ExpandedCameraView({
               ].map(([k, v]) => (
                 <div key={k} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3, fontSize: 9 }}>
                   <span style={{ color: '#64748b' }}>{k}</span>
-                  <span style={{ color: k === 'RISK STATUS' ? riskColor : '#e2e8f0', fontWeight: 600 }}>{v}</span>
+                  <span style={{ color: k === 'RISK STATUS' ? riskColor : k === 'ACTIVITY' ? '#00f0ff' : k === 'OBJECT RELATION' ? '#fbbf24' : '#e2e8f0', fontWeight: 600 }}>{v}</span>
                 </div>
               ))}
               <div style={{

@@ -49,7 +49,7 @@ class SurveillanceVisionPipeline:
               ↓
       ALERT & EVENT LOGGING
               ↓
-      RAKSHAN COMMAND CENTER
+      IBVAP COMMAND CENTER
     """
 
     def __init__(self, engine: str = "yunet", camera_id: str = "CAM-01"):
@@ -83,6 +83,12 @@ class SurveillanceVisionPipeline:
         self._last_yolo_detections: List[Dict[str, Any]] = []
         self._last_face_results: Dict[str, Dict[str, Any]] = {}
         self._last_plate_results: Dict[str, Dict[str, Any]] = {}
+
+        # Spatial-temporal holding & behavioral tracking state
+        self._holding_history: Dict[Tuple[str, str], int] = {}
+        self._face_stare_start: Dict[str, float] = {}
+        self._last_direction: Dict[str, str] = {}
+        self._direction_reversals: Dict[str, int] = {}
 
         logger.info("[+] SurveillanceVisionPipeline initialized with real multi-object analytics.")
 
@@ -337,40 +343,10 @@ class SurveillanceVisionPipeline:
         )
         analyzed_zone_targets = self.zone_analyzer.analyze(combined_for_zone, w, h)
 
-        # Map zone telemetry and transparent rule-based risk back to all tracks
+        # Map zone telemetry, spatial-temporal relationships, activity inference, behavioral signals, and explainable risk
         zone_lookup = {t.get("target_id"): t for t in analyzed_zone_targets}
-        for pt in enriched_person_targets:
-            zinfo = zone_lookup.get(pt["target_id"], {})
-            pt["in_restricted_zone"] = zinfo.get("in_restricted_zone", False)
-            pt["zone_name"] = zinfo.get("zone_name", "SECTOR ALPHA")
-            pt["loitering"] = zinfo.get("loitering", False)
-            pt["dwell_seconds"] = zinfo.get("dwell_seconds", pt["dwell_seconds"])
-
-            if pt["in_restricted_zone"] and pt["loitering"]:
-                pt["risk_level"] = "CRITICAL"
-                pt["risk_reason"] = f"PERSON LOITERING IN RESTRICTED ZONE ({pt['dwell_seconds']:.0f}s)"
-            elif pt["in_restricted_zone"]:
-                pt["risk_level"] = "HIGH RISK"
-                pt["risk_reason"] = "PERSON CROSSED RESTRICTED BOUNDARY"
-            elif pt["loitering"]:
-                pt["risk_level"] = "SUSPICIOUS EVENT"
-                pt["risk_reason"] = f"EXTENDED DWELL TIME ({pt['dwell_seconds']:.0f}s)"
-            else:
-                pt["risk_level"] = "MONITORED"
-                pt["risk_reason"] = "PERSON TRACKED IN CORRIDOR"
-
-        for vt in enriched_vehicle_targets:
-            zinfo = zone_lookup.get(vt["track_id"], {})
-            vt["in_restricted_zone"] = zinfo.get("in_restricted_zone", False)
-            vt["zone_name"] = zinfo.get("zone_name", "SECTOR ALPHA")
-            vt["loitering"] = zinfo.get("loitering", False)
-
-            if vt["in_restricted_zone"]:
-                vt["risk_level"] = "HIGH RISK"
-                vt["risk_reason"] = f"VEHICLE ({vt['object_type']}) IN RESTRICTED ZONE"
-            else:
-                vt["risk_level"] = "MONITORED"
-                vt["risk_reason"] = f"VEHICLE ({vt['object_type']}) TRACKED"
+        now_epoch = time.time()
+        time_seen_str = time.strftime("%H:%M:%S")
 
         other_objects = []
         for ot in object_tracks:
@@ -394,14 +370,425 @@ class SurveillanceVisionPipeline:
                 "target_id": ot["track_id"],
                 "class": cname,
                 "in_restricted_zone": in_zone,
-                "zone_name": zinfo.get("zone_name", "SECTOR ALPHA"),
+                "zone_name": zinfo.get("zone_name", "BORDER ZONE A"),
                 "dwell_seconds": dwell,
                 "risk_level": risk_level,
                 "risk_reason": risk_reason,
             })
 
+        # Vehicle zone & observable activity enrichment
+        for vt in enriched_vehicle_targets:
+            zinfo = zone_lookup.get(vt["track_id"], {})
+            vt["in_restricted_zone"] = zinfo.get("in_restricted_zone", False)
+            vt["zone_name"] = zinfo.get("zone_name", "BORDER ZONE A")
+            vt["loitering"] = zinfo.get("loitering", False)
+            v_speed = vt.get("relative_speed", 0.0)
+
+            if vt["in_restricted_zone"]:
+                vt["activity"] = "VEHICLE ENTERING RESTRICTED AREA"
+                vt["risk_level"] = "HIGH RISK"
+                vt["risk_reason"] = f"VEHICLE ({vt['object_type']}) IN RESTRICTED ZONE"
+            elif v_speed < 8.0:
+                vt["activity"] = "VEHICLE STOPPING"
+                vt["risk_level"] = "MONITORED"
+                vt["risk_reason"] = f"VEHICLE ({vt['object_type']}) STOPPED IN CORRIDOR"
+            else:
+                vt["activity"] = "VEHICLE APPROACHING"
+                vt["risk_level"] = "MONITORED"
+                vt["risk_reason"] = f"VEHICLE ({vt['object_type']}) TRACKED"
+
+        # Spatial-temporal Person + Object & Person + Vehicle relationship engine
+        relationships: List[Dict[str, Any]] = []
+        active_pair_keys = set()
+
+        CARRYABLE_BAGS = {"backpack", "suitcase", "handbag"}
+        HOLDABLE_ITEMS = {
+            "cell phone", "bottle", "cup", "laptop", "book", "umbrella",
+            "scissors", "knife", "remote", "keyboard", "mouse",
+            "baseball bat", "sports ball", "clock", "wine glass", "fork", "spoon", "pen"
+        }
+
+        for pt in enriched_person_targets:
+            ptid = pt["target_id"]
+            px, py, pw, ph = pt["bbox"]
+            pcx = px + pw / 2.0
+            pcy = py + ph / 2.0
+
+            holding_objs = []
+            nearby_objs = []
+
+            for ot in other_objects:
+                otid = ot["track_id"]
+                ox, oy, ow, oh = ot["bbox"]
+                ocx = ox + ow / 2.0
+                ocy = oy + oh / 2.0
+                oname = (ot.get("class_name") or ot.get("class") or "object").lower()
+                oconf = float(ot.get("confidence_pct", 50.0))
+
+                # Compute intersection and containment of object within expanded person box
+                ix1 = max(px - int(0.15 * pw), ox)
+                iy1 = max(py - int(0.05 * ph), oy)
+                ix2 = min(px + int(1.15 * pw), ox + ow)
+                iy2 = min(py + int(1.08 * ph), oy + oh)
+                inter_area = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+                obj_area = max(1, ow * oh)
+                containment = inter_area / obj_area
+                dist = float(np.hypot(pcx - ocx, pcy - ocy))
+                norm_dist = dist / max(40.0, float(max(pw, ph)))
+
+                pair_key = (ptid, otid)
+                active_pair_keys.add(pair_key)
+
+                # Check spatial criteria for holding/carrying
+                in_hand_or_body = (containment >= 0.30) or (norm_dist <= 0.62)
+                if in_hand_or_body and oconf >= 38.0:
+                    self._holding_history[pair_key] = self._holding_history.get(pair_key, 0) + 1
+                else:
+                    self._holding_history[pair_key] = max(0, self._holding_history.get(pair_key, 0) - 1)
+
+                frames_confirmed = self._holding_history.get(pair_key, 0)
+
+                # Require temporal confirmation (>= 2 frames) OR high containment + high confidence
+                is_confirmed_holding = (
+                    (frames_confirmed >= 2 or (containment >= 0.60 and oconf >= 50.0))
+                    and (oname in CARRYABLE_BAGS or oname in HOLDABLE_ITEMS)
+                )
+
+                if is_confirmed_holding:
+                    rel_verb = "CARRYING" if oname in CARRYABLE_BAGS else "HOLDING"
+                    holding_objs.append({
+                        "track_id": otid,
+                        "class_name": oname.upper(),
+                        "relation": rel_verb,
+                        "confidence": round(oconf, 1),
+                        "frames_confirmed": frames_confirmed,
+                    })
+                    ot["held_by"] = ptid
+                    ot["relationship_label"] = f"{rel_verb} BY {ptid}"
+                    relationships.append({
+                        "subject": f"PERSON #{ptid}",
+                        "relation": rel_verb,
+                        "object": f"{oname.upper()} ({otid})",
+                        "confidence": round(min(pt["confidence_pct"], oconf), 1),
+                        "confirmed": True,
+                    })
+                elif norm_dist <= 1.35 or containment > 0.05:
+                    nearby_objs.append({
+                        "track_id": otid,
+                        "class_name": oname.upper(),
+                        "relation": "OBJECT NEAR PERSON",
+                        "confidence": round(oconf, 1),
+                    })
+                    ot["relationship_label"] = f"NEAR {ptid}"
+                    relationships.append({
+                        "subject": f"PERSON #{ptid}",
+                        "relation": "NEAR",
+                        "object": f"{oname.upper()} ({otid})",
+                        "confidence": round(min(pt["confidence_pct"], oconf), 1),
+                        "confirmed": False,
+                    })
+
+            # Check Person + Vehicle proximity relationship
+            nearby_vehs = []
+            for vt in enriched_vehicle_targets:
+                vtid = vt["track_id"]
+                vx, vy, vw, vh = vt["bbox"]
+                vcx = vx + vw / 2.0
+                vcy = vy + vh / 2.0
+                vdist = float(np.hypot(pcx - vcx, pcy - vcy))
+                if vdist <= 1.35 * max(pw, ph, vw, vh):
+                    nearby_vehs.append(vt)
+                    relationships.append({
+                        "subject": f"PERSON #{ptid}",
+                        "relation": "NEAR",
+                        "object": f"VEHICLE #{vtid} ({vt['object_type']})",
+                        "confidence": round(min(pt["confidence_pct"], vt["confidence"]), 1),
+                        "confirmed": True,
+                    })
+
+            pt["holding_objects"] = holding_objs
+            pt["nearby_objects"] = nearby_objs
+            pt["nearby_vehicles"] = [v["track_id"] for v in nearby_vehs]
+
+            if holding_objs:
+                primary_held = holding_objs[0]
+                pt["holding_status"] = f"HOLDING: {primary_held['class_name']}"
+                pt["object_interaction"] = f"{primary_held['relation']}: {primary_held['class_name']}"
+            elif nearby_objs:
+                primary_near = nearby_objs[0]
+                pt["holding_status"] = f"OBJECT NEAR PERSON: {primary_near['class_name']}"
+                pt["object_interaction"] = f"OBJECT NEAR PERSON ({primary_near['class_name']})"
+            else:
+                pt["holding_status"] = "NONE"
+                pt["object_interaction"] = "NONE"
+
+        # Prune stale holding history pairs
+        for pk in list(self._holding_history.keys()):
+            if pk not in active_pair_keys:
+                self._holding_history[pk] = max(0, self._holding_history[pk] - 1)
+                if self._holding_history[pk] == 0:
+                    del self._holding_history[pk]
+
+        # Person Zone, Activity Inference, Behavioral Signals, Explainable Risk & Activity Card
+        multiple_people_gathering = len(enriched_person_targets) >= 2
+        fence_events = []
+
+        for pt in enriched_person_targets:
+            tid = pt["target_id"]
+            zinfo = zone_lookup.get(tid, {})
+            in_zone = zinfo.get("in_restricted_zone", False)
+            zone_move = zinfo.get("movement", pt.get("movement", "STATIONARY"))
+            loitering = zinfo.get("loitering", False)
+            dwell = zinfo.get("dwell_seconds", pt["dwell_seconds"])
+
+            pt["in_restricted_zone"] = in_zone
+            pt["zone_name"] = "BORDER ZONE A [RESTRICTED]" if in_zone else "BORDER ZONE A"
+            pt["loitering"] = loitering
+            pt["dwell_seconds"] = dwell
+
+            px, py, pw, ph = pt["bbox"]
+            aspect_ratio = ph / max(1.0, float(pw))
+            speed = float(pt.get("relative_speed", 0.0))
+            direction = pt.get("direction", "STATIONARY")
+
+            # 1. Base observable locomotion & speed category
+            if speed > 135.0:
+                locomotion = "RUNNING"
+                speed_category = "FAST"
+            elif speed > 14.0:
+                locomotion = "WALKING"
+                speed_category = "NORMAL"
+            else:
+                speed_category = "STATIONARY"
+                locomotion = "SITTING" if aspect_ratio < 1.32 else "STANDING"
+
+            # 2. Virtual fence crossing check (Zero-line at ~82% height)
+            foot_y_norm = (py + ph) / max(1.0, float(h))
+            crossing_fence = (0.78 <= foot_y_norm <= 0.86) and speed > 18.0
+            if crossing_fence:
+                fence_events.append({"track_id": tid, "fence_name": "Zero-Line BP-44"})
+
+            # 3. High-level observable activity inference
+            holding_objs = pt.get("holding_objects", [])
+            nearby_objs = pt.get("nearby_objects", [])
+            nx, ny, nw, nh = pt.get("normalized_box", [0.5, 0.5, 0.1, 0.2])
+            approaching_zone = (not in_zone) and (0.20 <= nx + nw / 2 <= 0.85) and speed > 14.0 and direction in ("EAST", "SOUTH-EAST", "NORTH-EAST", "SOUTH")
+
+            if crossing_fence:
+                activity_label = "CROSSING VIRTUAL FENCE"
+            elif zone_move == "ENTERING" or (in_zone and dwell < 3.0):
+                activity_label = "RESTRICTED-ZONE ENTRY"
+            elif zone_move == "EXITING":
+                activity_label = "LEAVING RESTRICTED ZONE"
+            elif in_zone and loitering:
+                activity_label = "PROLONGED PRESENCE IN RESTRICTED ZONE"
+            elif in_zone and holding_objs:
+                activity_label = f"RESTRICTED ZONE WITH {holding_objs[0]['class_name']}"
+            elif in_zone:
+                activity_label = "INSIDE RESTRICTED ZONE"
+            elif approaching_zone:
+                activity_label = "APPROACHING CHECKPOINT / ZONE"
+            elif multiple_people_gathering and speed < 25.0:
+                activity_label = "MULTIPLE PEOPLE GATHERING"
+            elif holding_objs and locomotion in ("WALKING", "RUNNING"):
+                activity_label = f"{locomotion} WITH {holding_objs[0]['class_name']}"
+            elif holding_objs:
+                activity_label = f"HOLDING {holding_objs[0]['class_name']}"
+            elif nearby_objs:
+                activity_label = f"PERSON-OBJECT INTERACTION ({nearby_objs[0]['class_name']})"
+            elif loitering or dwell >= 15.0:
+                activity_label = "PROLONGED PRESENCE"
+            elif speed > 135.0:
+                activity_label = "UNUSUAL MOVEMENT (RUNNING)"
+            else:
+                activity_label = locomotion
+
+            pt["locomotion"] = locomotion
+            pt["speed_category"] = speed_category
+            pt["activity"] = activity_label
+
+            # 4. Observable Behavioral Signals & Transparent Expression Handling
+            behavioral_signals: List[Dict[str, Any]] = []
+
+            # Track continuous camera/checkpoint observation duration
+            if pt.get("has_face") and speed < 20.0:
+                if tid not in self._face_stare_start:
+                    self._face_stare_start[tid] = now_epoch
+                stare_dur = now_epoch - self._face_stare_start[tid]
+                if stare_dur >= 6.0:
+                    behavioral_signals.append({
+                        "signal": f"Prolonged observation toward camera/checkpoint ({stare_dur:.0f}s)",
+                        "confidence": "MEDIUM" if stare_dur >= 10.0 else "LOW",
+                        "note": "Observable gaze duration — NOT a confirmed threat"
+                    })
+            else:
+                self._face_stare_start.pop(tid, None)
+
+            # Head orientation asymmetry from facial landmarks
+            landmarks = pt.get("landmarks", [])
+            if len(landmarks) >= 3:
+                try:
+                    re_x, le_x, nose_x = landmarks[0][0], landmarks[1][0], landmarks[2][0]
+                    eye_span = max(1.0, abs(le_x - re_x))
+                    nose_offset = abs(( nose_x - (re_x + le_x) / 2.0 )) / eye_span
+                    if nose_offset > 0.36:
+                        behavioral_signals.append({
+                            "signal": "Unusual lateral head orientation toward sector boundary",
+                            "confidence": "LOW",
+                            "note": "Observable head pose signal"
+                        })
+                except Exception:
+                    pass
+
+            # Track direction reversals (approach/retreat behavior)
+            prev_dir = self._last_direction.get(tid)
+            if prev_dir and direction != "STATIONARY" and prev_dir != "STATIONARY" and direction != prev_dir:
+                self._direction_reversals[tid] = self._direction_reversals.get(tid, 0) + 1
+            self._last_direction[tid] = direction
+
+            if self._direction_reversals.get(tid, 0) >= 3:
+                behavioral_signals.append({
+                    "signal": "Repeated approach/retreat trajectory changes",
+                    "confidence": "MEDIUM",
+                    "note": "Observable trajectory oscillation"
+                })
+
+            if speed > 135.0:
+                behavioral_signals.append({
+                    "signal": f"Sudden rapid movement ({speed:.0f} px/s)",
+                    "confidence": "MEDIUM",
+                    "note": "High relative optical velocity"
+                })
+
+            if dwell >= 12.0 and speed < 10.0:
+                behavioral_signals.append({
+                    "signal": f"Prolonged stationary behavior ({dwell:.0f}s)",
+                    "confidence": "MEDIUM",
+                    "note": "Extended stationary presence"
+                })
+
+            # Facial expression (Diagnostic ONLY — NEVER a threat classifier by itself)
+            emotion_obj = pt.get("emotion", {})
+            expr_name = (emotion_obj.get("primary_expression") or "Neutral").upper()
+            expr_conf = float(emotion_obj.get("confidence", 60.0))
+
+            # 5. Explainable Risk Engine (0 - 100)
+            risk_score = 10  # Baseline monitored presence
+            contributing_signals = []
+            reasons = []
+
+            if in_zone:
+                risk_score += 45
+                contributing_signals.append({"signal": "Restricted zone entry", "points": 45})
+                reasons.append("Person entered restricted zone")
+
+            if loitering or dwell >= 15.0:
+                pts = 22 if in_zone else 15
+                risk_score += pts
+                contributing_signals.append({"signal": f"Prolonged presence ({dwell:.0f}s)", "points": pts})
+                reasons.append(f"Person remained in monitored area for {dwell:.0f} seconds")
+            elif dwell >= 8.0 and in_zone:
+                risk_score += 10
+                contributing_signals.append({"signal": f"Dwell inside restricted zone ({dwell:.0f}s)", "points": 10})
+                reasons.append(f"Person remained inside restricted zone for {dwell:.0f} seconds")
+
+            if crossing_fence:
+                risk_score += 25
+                contributing_signals.append({"signal": "Virtual fence crossing", "points": 25})
+                reasons.append("Person crossed virtual zero-line fence boundary")
+            elif approaching_zone:
+                risk_score += 12
+                contributing_signals.append({"signal": "Approaching restricted checkpoint", "points": 12})
+                reasons.append("Person moving toward protected boundary")
+
+            if speed > 135.0:
+                risk_score += 15
+                contributing_signals.append({"signal": "Unusual rapid movement", "points": 15})
+                reasons.append(f"Unusual rapid movement ({speed:.0f} px/s)")
+
+            if pt.get("nearby_vehicles"):
+                risk_score += 12
+                contributing_signals.append({"signal": "Vehicle proximity in sector", "points": 12})
+                reasons.append(f"Proximity to vehicle ({', '.join(pt['nearby_vehicles'])})")
+
+            if holding_objs and any(h["class_name"] in ("BACKPACK", "SUITCASE", "HANDBAG") for h in holding_objs) and in_zone:
+                risk_score += 10
+                contributing_signals.append({"signal": "Carrying baggage in restricted zone", "points": 10})
+                reasons.append(f"Carrying {holding_objs[0]['class_name']} inside restricted zone")
+
+            if pt.get("face_match", {}).get("face_match") and pt["face_match"].get("identity_status") == "WATCHLIST":
+                risk_score += 35
+                contributing_signals.append({"signal": "Enrolled watchlist facial match", "points": 35})
+                reasons.append(f"Matched enrolled watchlist subject ({pt['face_match'].get('display_name')})")
+
+            # Expression NEVER increases risk alone — only when combined with restricted zone + behavioral signal
+            if expr_name in ("ANGRY", "FEAR") and in_zone and len(behavioral_signals) > 0:
+                risk_score += 5
+                contributing_signals.append({
+                    "signal": f"{expr_name} expression + unusual behavior + restricted zone (Combined contextual signal)",
+                    "points": 5
+                })
+                reasons.append(f"Combined signal: {expr_name} expression with unusual behavior inside restricted zone")
+
+            risk_score = min(100, max(5, risk_score))
+
+            if risk_score >= 75:
+                pt["risk_level"] = "CRITICAL"
+                card_status = "HIGH RISK"
+                primary_reason = reasons[0].upper() if reasons else "CRITICAL RESTRICTED-ZONE BREACH"
+            elif risk_score >= 50 or in_zone:
+                pt["risk_level"] = "HIGH RISK"
+                card_status = "HIGH RISK"
+                primary_reason = "RESTRICTED-ZONE ENTRY" if in_zone else (reasons[0].upper() if reasons else "HIGH RISK ACTIVITY")
+            elif risk_score >= 28:
+                pt["risk_level"] = "MEDIUM"
+                card_status = "MONITORED"
+                primary_reason = reasons[0].upper() if reasons else "PROLONGED / UNUSUAL MOVEMENT"
+            else:
+                pt["risk_level"] = "NORMAL"
+                card_status = "MONITORED"
+                primary_reason = "STANDARD CORRIDOR PRESENCE"
+
+            pt["risk_score"] = risk_score
+            pt["risk_reason"] = primary_reason
+            pt["contributing_signals"] = contributing_signals
+            pt["reasons"] = [f"{i+1}. {r}" for i, r in enumerate(reasons)] if reasons else ["1. Routine monitored presence in border corridor (No threat signals)"]
+            pt["behavioral_signals"] = behavioral_signals
+
+            # Honest facial status formatting for Person Activity Card
+            fm = pt.get("face_match", {})
+            if fm.get("face_match") and fm.get("display_name") and fm.get("display_name") != "UNKNOWN":
+                face_card_status = f"FACE DETECTED | KNOWN PERSON ({fm.get('display_name')})"
+            elif pt.get("has_face"):
+                face_card_status = "FACE DETECTED | UNKNOWN PERSON (NO MATCH)"
+            else:
+                face_card_status = "NO FACE DETECTED"
+
+            # Build structured PERSON ACTIVITY CARD (Requirement 5)
+            pt["activity_card"] = {
+                "person_id": f"PERSON #{tid}",
+                "track_id": tid,
+                "status": card_status,
+                "location": "BORDER ZONE A [RESTRICTED]" if in_zone else "BORDER ZONE A",
+                "movement": locomotion,
+                "direction": direction,
+                "speed": speed_category,
+                "speed_px_s": round(speed, 1),
+                "object": pt["holding_status"],
+                "activity": activity_label,
+                "time_seen": time_seen_str,
+                "dwell_seconds": round(dwell, 1),
+                "face_status": face_card_status,
+                "expression": f"{expr_name} ({expr_conf:.0f}%) [NON-THREAT DIAGNOSTIC]",
+                "behavioral_signals": behavioral_signals,
+                "risk": pt["risk_level"],
+                "risk_score": risk_score,
+                "reason": primary_reason,
+                "contributing_signals": contributing_signals,
+                "reasons": pt["reasons"],
+            }
+
         # ── 6. Observable CV Event Engine Processing ─────────────────────────
-        # Combine person & vehicle tracks with full telemetry for event engine
         engine_tracks = [
             {
                 "track_id": pt["target_id"],
@@ -412,7 +799,9 @@ class SurveillanceVisionPipeline:
                 "loitering": pt["loitering"],
                 "dwell_seconds": pt["dwell_seconds"],
                 "direction": pt["direction"],
-                "relative_speed": pt["relative_speed"]
+                "relative_speed": pt["relative_speed"],
+                "holding_status": pt.get("holding_status", "NONE"),
+                "activity": pt.get("activity", "MONITORED"),
             }
             for pt in enriched_person_targets
         ] + [
@@ -425,7 +814,9 @@ class SurveillanceVisionPipeline:
                 "loitering": vt["loitering"],
                 "dwell_seconds": vt["dwell_seconds"],
                 "direction": vt["direction"],
-                "relative_speed": vt["relative_speed"]
+                "relative_speed": vt["relative_speed"],
+                "holding_status": "NONE",
+                "activity": vt.get("activity", "VEHICLE MONITORED"),
             }
             for vt in enriched_vehicle_targets
         ]
@@ -434,8 +825,13 @@ class SurveillanceVisionPipeline:
             tracks=engine_tracks,
             face_matches=active_face_matches,
             anpr_results=active_anpr_results,
+            fence_events=fence_events,
             camera_id=self.camera_id
         )
+
+        # Combine per-person max risk score with event engine threat score
+        max_person_risk = max((pt.get("risk_score", 0) for pt in enriched_person_targets), default=0)
+        overall_threat_score = max(ee_result.get("threat_score", 0), max_person_risk)
 
         latency_ms = round((time.time() - t_start) * 1000, 1)
         fps = round(1000.0 / max(1.0, latency_ms), 1)
@@ -452,6 +848,7 @@ class SurveillanceVisionPipeline:
         }
 
         # ── 7. Build Unified Telemetry Payload ──────────────────────────────
+        yolo_stat = self.yolo_detector.status()
         return {
             "camera_id": self.camera_id,
             "kpis": kpis,
@@ -459,6 +856,8 @@ class SurveillanceVisionPipeline:
             "vehicles": enriched_vehicle_targets,
             "tracks": all_tracks,
             "other_objects": other_objects,
+            "relationships": relationships,
+            "person_activity_cards": [pt["activity_card"] for pt in enriched_person_targets if "activity_card" in pt],
             "total_faces": len(enriched_person_targets),
             "face_matches": active_face_matches,
             "anpr_events": active_anpr_results,
@@ -466,14 +865,22 @@ class SurveillanceVisionPipeline:
             "events": ee_result.get("events", []),
             "ai_alerts": ee_result.get("alerts", []),
             "ai_events": ee_result.get("events", []),
-            "threat_score": ee_result.get("threat_score", 0),
+            "threat_score": overall_threat_score,
+            "contributing_signals": (
+                enriched_person_targets[0].get("contributing_signals", [])
+                if enriched_person_targets else ee_result.get("contributing_signals", [])
+            ),
+            "threat_reasons": (
+                enriched_person_targets[0].get("reasons", [])
+                if enriched_person_targets else ee_result.get("reasons", [])
+            ),
             "high_threat_count": sum(1 for a in ee_result.get("alerts", []) if a.get("severity") in ("CRITICAL", "HIGH")),
             "zone_intrusions": ee_result.get("kpis", {}).get("zone_intrusions", 0),
             "loitering_count": ee_result.get("kpis", {}).get("loitering_count", 0),
             "frame_size": {"width": w, "height": h},
             "analytics_enabled": self.analytics_enabled,
             "ai_stats": {
-                "yolo_status": self.yolo_detector.status()["status"],
+                "yolo_status": yolo_stat["status"],
                 "yolo_model": self.yolo_detector.model_path,
                 "yolo_device": self.yolo_detector.device,
                 "face_engine": "YuNet + SFace-128D (ONNX)",
@@ -486,8 +893,10 @@ class SurveillanceVisionPipeline:
                 "face_matches_count": len(active_face_matches),
                 "anpr_events_count": len(active_anpr_results),
                 "objects_count": len(other_objects),
+                "relationships_count": len(relationships),
                 "total_detections": len(self._last_yolo_detections),
-                "weapon_detection": "NOT CONFIGURED",
+                "weapon_detection": yolo_stat.get("weapon_detection", "NOT CONFIGURED"),
+                "custom_object_detection": yolo_stat.get("custom_object_detection", "NOT CONFIGURED"),
                 "latency_ms": latency_ms
             }
         }
@@ -509,6 +918,8 @@ class SurveillanceVisionPipeline:
             "vehicles": [],
             "tracks": [],
             "other_objects": [],
+            "relationships": [],
+            "person_activity_cards": [],
             "total_faces": 0,
             "face_matches": [],
             "anpr_events": [],
@@ -516,6 +927,8 @@ class SurveillanceVisionPipeline:
             "ai_alerts": [],
             "ai_events": [],
             "threat_score": 0,
+            "contributing_signals": [],
+            "threat_reasons": [],
             "high_threat_count": 0,
             "zone_intrusions": 0,
             "loitering_count": 0,
@@ -529,8 +942,10 @@ class SurveillanceVisionPipeline:
                 "vehicles_count": 0,
                 "active_tracks": 0,
                 "objects_count": 0,
+                "relationships_count": 0,
                 "total_detections": 0,
                 "weapon_detection": "NOT CONFIGURED",
+                "custom_object_detection": "NOT CONFIGURED",
                 "latency_ms": 0.0
             }
         }

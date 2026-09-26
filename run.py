@@ -25,7 +25,7 @@ BANNER = r"""
   ██╔══██╗██║   ██║██╔══██╗██║  ██║██╔══╝  ██╔══██╗   ╚════██║██║██╔══██║
   ██████╔╝╚██████╔╝██║  ██║██████╔╝███████╗██║  ██║   ███████║██║██║  ██║
   ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝   ╚══════╝╚═╝╚═╝  ╚═╝
-           RAKSHAN AI BORDER SURVEILLANCE COMMAND CENTER (SIH 26187)
+           IBVAP — INTELLIGENT BORDER VIDEO ANALYTICS PLATFORM (SIH 2026)
 =============================================================================
   - Optical Ingestion: Local Laptop Webcam (1280x720 @ 30 FPS)
   - Face Detection: YuNet Deep Neural Network & OpenCV Haar Cascade

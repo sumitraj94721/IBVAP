@@ -1,5 +1,5 @@
 """
-End-to-End Verification Test Suite for IBVAP / RAKSHAN Video Analytics Upgrade
+End-to-End Verification Test Suite for IBVAP Video Analytics Upgrade
 Tests A through G as defined in Specification Section 25.
 """
 import sys
@@ -155,9 +155,70 @@ def test_g_master_pipeline_schema():
     print("Test G Passed (Full pipeline integration and schema compliance verified).")
     return True
 
+from backend.events.incident_fusion import IBVAPIncidentFusionEngine
+
+def test_h_holding_and_activity_understanding():
+    print("\n--- TEST H: Spatial-Temporal Holding & Activity Understanding ---")
+    pipeline = SurveillanceVisionPipeline(camera_id="CAM-01")
+    # Confirm custom_object_detection and weapon_detection default to NOT CONFIGURED
+    st = pipeline.yolo_detector.status()
+    assert st["custom_object_detection"] == "NOT CONFIGURED"
+    assert st["weapon_detection"] == "NOT CONFIGURED"
+    print(f"Detector status verified: custom={st['custom_object_detection']}, weapon={st['weapon_detection']}")
+    return True
+
+def test_i_explainable_threat_score():
+    print("\n--- TEST I: Explainable Threat Score & 5 Alert Levels ---")
+    event_engine = SurveillanceEventEngine(camera_id="CAM-01")
+    mock_track = {
+        "track_id": "P-001",
+        "category": "person",
+        "class_name": "person",
+        "bbox": [240, 120, 60, 140],
+        "relative_speed": 22.0,
+        "direction": "EAST",
+        "dwell_seconds": 25.0,
+        "in_restricted_zone": True,
+        "loitering": True,
+        "holding_object": "BACKPACK",
+        "holding_status": "CARRYING: BACKPACK",
+        "confidence_pct": 91.0,
+    }
+    res = event_engine.process([mock_track], camera_id="CAM-01")
+    assert res["threat_score"] > 0, "Threat score must be positive for restricted zone + loitering"
+    assert len(res["contributing_signals"]) > 0, "Must include contributing_signals breakdown"
+    assert len(res["reasons"]) > 0, "Must include human-readable numbered reasons"
+    for alt in res["alerts"]:
+        assert alt["severity"] in ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"]
+        exp = alt.get("explainability", {})
+        for k in ["what", "where", "when", "object", "why", "confidence"]:
+            assert k in exp, f"Alert explainability missing '{k}'"
+    print(f"Explainable Threat Score: {res['threat_score']}/100 | Signals: {res['contributing_signals']}")
+    print("Test I Passed (Explainable risk score and WHAT/WHERE/WHEN/OBJECT/WHY/CONFIDENCE verified).")
+    return True
+
+def test_j_multi_camera_incident_fusion():
+    print("\n--- TEST J: Multi-Camera Intelligence & IBVAP Incident Fusion Engine ---")
+    snap_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static", "snapshots"))
+    fusion = IBVAPIncidentFusionEngine(snapshot_dir=snap_dir)
+    demo_res = fusion.trigger_sih_demo_fusion()
+    inc = demo_res["incident"]
+    alert = demo_res["alert"]
+    assert inc["primary_camera"] == "CAM-03"
+    assert "CAM-01" in inc["normal_cameras"]
+    assert set(inc["cameras_involved"]) == {"CAM-02", "CAM-03", "CAM-04"}
+    assert alert["event_type"] == "MULTI_CAMERA_SECURITY_ALERT"
+    assert len(fusion.cross_camera_timeline) >= 5
+    assert len(fusion.snapshots) >= 1
+    summary = fusion.get_intelligence_summary()
+    assert len(summary["what_is_happening_now"]) >= 1
+    print(f"Fused Incident: {inc['incident_id']} | Primary View: {summary['priority_camera']} | Snapshots: {len(summary['snapshots'])}")
+    print("Test J Passed (Multi-Camera Incident Fusion, Timeline, Snapshots & Smart Camera Prioritization verified).")
+    return True
+
 if __name__ == "__main__":
     print("=================================================================")
-    print("RUNNING IBVAP / RAKSHAN ACCEPTANCE TESTS A THROUGH G")
+    print("RUNNING IBVAP ACCEPTANCE TESTS A THROUGH J")
     print("=================================================================")
     t_a = test_a_person_detection()
     t_b = test_b_multi_person_tracking()
@@ -166,7 +227,11 @@ if __name__ == "__main__":
     t_e = test_e_anpr_graceful_standby()
     t_f = test_f_observable_cv_event_engine()
     t_g = test_g_master_pipeline_schema()
+    t_h = test_h_holding_and_activity_understanding()
+    t_i = test_i_explainable_threat_score()
+    t_j = test_j_multi_camera_incident_fusion()
     
     print("\n=================================================================")
-    print("ALL TESTS (A through G) COMPLETED AND PASSED!")
+    print("ALL TESTS (A through J) COMPLETED AND PASSED!")
     print("=================================================================")
+

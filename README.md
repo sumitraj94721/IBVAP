@@ -1,11 +1,11 @@
-# RAKSHAN AI Border Surveillance Command Center (SIH 26187)
+# IBVAP — Intelligent Border Video Analytics Platform (SIH 2026)
 
 [![OpenCV](https://img.shields.io/badge/OpenCV-4.13.0-5C3EE8?logo=opencv&logoColor=white)](https://opencv.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.111.0-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![ONNX](https://img.shields.io/badge/ONNX_DNN-FER%2B_ResNet-005CED?logo=onnx&logoColor=white)](https://onnx.ai/)
 [![WebSockets](https://img.shields.io/badge/WebSockets-Real--Time_30FPS-blue)](https://websockets.readthedocs.io/)
 
-A military-grade, real-time AI Border Surveillance CCTV Command Center prototype developed for **Smart India Hackathon (SIH 26187)**. The system ingests live video from the local laptop webcam, performs real-time face detection, persistent target tracking (`[TARGET ID: LOC_#1]`), and deep neural network emotion/expression classification at **25-30 FPS** with **< 15ms CPU latency**, overlaying a high-tech surveillance tactical HUD.
+A military-grade, real-time Intelligent Border Video Analytics Platform (IBVAP) prototype developed for **Smart India Hackathon (SIH 2026)**. The system ingests live video from the local laptop webcam, performs real-time multi-object YOLO detection, persistent target tracking, person-object spatial-temporal understanding, multi-camera incident fusion, and explainable risk analysis at **25-30 FPS**, overlaying a high-tech surveillance tactical HUD.
 
 ---
 
@@ -75,7 +75,7 @@ A military-grade, real-time AI Border Surveillance CCTV Command Center prototype
 ## Project Structure
 
 ```
-RAKSHAN/
+IBVAP/
 ├── backend/
 │   ├── __init__.py            # Backend package initialization
 │   ├── app.py                 # FastAPI application, WebSocket & REST endpoints
@@ -121,7 +121,7 @@ python run.py
 
 ### 4. Connect a Remote CAM-02 Edge Node
 
-Run the following on the teammate laptop from the RAKSHAN project root. The webcam remains real; no footage is generated or replayed:
+Run the following on the teammate laptop from the IBVAP project root. The webcam remains real; no footage is generated or replayed:
 
 ```powershell
 pip install -r requirements.txt
@@ -133,7 +133,7 @@ python run.py
 Allow inbound TCP port `8000` in the teammate laptop firewall if Windows prompts for it. The teammate's stream URL is:
 `http://TEAMMATE_IP:8000/edge/video_feed`
 
-On the main RAKSHAN laptop, run the backend from the project root with the teammate's LAN IP:
+On the main IBVAP laptop, run the backend from the project root with the teammate's LAN IP:
 
 ```powershell
 $env:CAM2_ENABLED="true"

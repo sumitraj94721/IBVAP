@@ -1,5 +1,5 @@
 """
-RAKSHAN - AI Border Surveillance Command Center (SIH 26187)
+IBVAP — Intelligent Border Video Analytics Platform (SIH 2026)
 Phase 1: Foundational Command Center Dashboard & Video Streaming Grid
 FastAPI Application Entrypoint
 """
@@ -33,8 +33,8 @@ os.makedirs(STATIC_DIR, exist_ok=True)
 jinja_env = Environment(loader=FileSystemLoader(TEMPLATES_DIR))
 
 app = FastAPI(
-    title="RAKSHAN - AI Border Surveillance Command Center",
-    description="Phase 1: Security Operations Center Dashboard & 2x2 CCTV Grid (SIH 26187)",
+    title="IBVAP — Intelligent Border Video Analytics Platform",
+    description="Security Operations Center Dashboard & 2x2 CCTV Grid (SIH 2026)",
     version="1.0.0"
 )
 
@@ -73,7 +73,7 @@ async def root_entry(
     officer: Optional[Dict[str, Any]] = Depends(get_current_officer)
 ):
     """
-    Entry point for RAKSHAN.
+    Entry point for IBVAP.
     If authenticated -> renders main SOC Command Center dashboard.
     If not logged in -> redirects to /login.
     """
@@ -84,7 +84,7 @@ async def root_entry(
     return template.render(
         kpi=kpi_state,
         officer=officer,
-        title="RAKSHAN — Command Center Dashboard"
+        title="IBVAP — Intelligent Border Video Analytics Platform | SIH 2026"
     )
 
 
@@ -97,7 +97,7 @@ async def login_page(
     if officer:
         return RedirectResponse(url="/", status_code=303)
     template = jinja_env.get_template("login.html")
-    return template.render(title="RAKSHAN — Command Terminal Login")
+    return template.render(title="IBVAP — Command Terminal Login")
 
 
 @app.post("/login")
@@ -135,7 +135,7 @@ async def api_login(request: Request, response: Response):
         audit_event(
             user_id=user_id or "UNKNOWN",
             action="LOGIN_FAILED",
-            target="RAKSHAN_COMMAND_HUB",
+            target="IBVAP_COMMAND_HUB",
             details="Rejected: Invalid credentials",
             request=request
         )
@@ -143,7 +143,7 @@ async def api_login(request: Request, response: Response):
             raise HTTPException(status_code=401, detail="Invalid admin credentials")
         template = jinja_env.get_template("login.html")
         return HTMLResponse(
-            template.render(title="RAKSHAN Admin Login", error="Invalid admin credentials"),
+            template.render(title="IBVAP Admin Login", error="Invalid admin credentials"),
             status_code=401
         )
         if is_json:
@@ -152,7 +152,7 @@ async def api_login(request: Request, response: Response):
                 detail="AUTHENTICATION FAILED — INVALID CREDENTIALS"
             )
         template = jinja_env.get_template("login.html")
-        return HTMLResponse(template.render(title="RAKSHAN — Login"), status_code=401)
+        return HTMLResponse(template.render(title="IBVAP — Login"), status_code=401)
 
     token = create_session_token(officer, remember=remember)
     max_age = 604800 if remember else 86400
@@ -160,7 +160,7 @@ async def api_login(request: Request, response: Response):
     audit_event(
         user_id=officer["user_id"],
         action="LOGIN",
-        target="RAKSHAN_COMMAND_HUB",
+        target="IBVAP_COMMAND_HUB",
         details=f"Authenticated as {officer['full_name']} ({officer['rank']})",
         request=request
     )
@@ -221,7 +221,7 @@ async def dashboard_page(
     return template.render(
         kpi=kpi_state,
         officer=officer,
-        title="RAKSHAN — Command Center Dashboard"
+        title="IBVAP — Intelligent Border Video Analytics Platform | SIH 2026"
     )
 
 
@@ -391,7 +391,7 @@ async def websocket_alerts_endpoint(websocket: WebSocket):
 if __name__ == "__main__":
     import uvicorn
     print("\n===================================================================")
-    print("  RAKSHAN — AI BORDER SURVEILLANCE COMMAND CENTER [PHASE 1]    ")
+    print("  IBVAP — INTELLIGENT BORDER VIDEO ANALYTICS PLATFORM [PHASE 1]    ")
     print("  Command Center SOC & 2x2 CCTV Grid                              ")
     print("  Listening on http://127.0.0.1:8000                              ")
     print("===================================================================\n")
