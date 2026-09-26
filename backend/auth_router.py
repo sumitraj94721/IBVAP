@@ -14,6 +14,7 @@ from backend.auth_service import (
     create_session_token,
     verify_session_token,
     SESSION_COOKIE_NAME,
+    SECURE_SESSION_COOKIE,
     DEMO_BYPASS_AUTH,
     get_demo_officer
 )
@@ -146,7 +147,7 @@ async def login(req: LoginRequest, request: Request, response: Response):
         httponly=True,
         max_age=max_age,
         samesite="lax",
-        secure=False # Set to True in production HTTPS
+        secure=SECURE_SESSION_COOKIE,
     )
 
     # Audit successful login
@@ -162,7 +163,6 @@ async def login(req: LoginRequest, request: Request, response: Response):
         "status": "AUTHENTICATED",
         "message": f"Welcome, {officer['full_name']}. Terminal session established.",
         "officer": officer,
-        "token": token,
         "redirect": "/dashboard"
     }
 

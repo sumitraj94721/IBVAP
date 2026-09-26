@@ -43,8 +43,8 @@ export default function App() {
 
   // Operational State
   const [cameras, setCameras] = useState(INITIAL_CAMERAS);
-  const [alerts, setAlerts] = useState(INITIAL_ALERTS);
-  const [timeline, setTimeline] = useState(INITIAL_TIMELINE);
+  const [alerts, setAlerts] = useState([]);
+  const [timeline, setTimeline] = useState([]);
   const [threatLevel, setThreatLevel] = useState('HIGH');
   const [isMuted, setIsMuted] = useState(false);
   const [isSirenActive, setIsSirenActive] = useState(false);
@@ -89,21 +89,6 @@ export default function App() {
       setThreatLevel('MODERATE');
     }
   }, [alerts]);
-
-  // Subtle periodic background pulse to make system feel alive
-  useEffect(() => {
-    const pulseInterval = setInterval(() => {
-      // Small jitter to camera FPS for realistic telemetry
-      setCameras((prevCams) =>
-        prevCams.map((c) => ({
-          ...c,
-          fps: Math.min(30, Math.max(22, c.fps + (Math.random() > 0.5 ? 1 : -1))),
-        }))
-      );
-    }, 4000);
-
-    return () => clearInterval(pulseInterval);
-  }, []);
 
   // Route synchronization: ensure unauthenticated access is redirected to /login,
   // and authenticated users visiting /login are redirected to /dashboard (Step 12)
@@ -186,7 +171,7 @@ export default function App() {
 
   // Handler: Trigger Intrusion Drill (Key SIH Demonstration Feature)
   const handleTriggerDrill = () => {
-    const newId = `ALT-${Math.floor(1000 + Math.random() * 9000)}`;
+    const newId = `DRILL-${Date.now()}`;
     const now = new Date();
     const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
 

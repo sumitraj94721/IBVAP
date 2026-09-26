@@ -1,11 +1,8 @@
 import React, { useState } from 'react';
 
-const DEMO_ADMIN_USERNAME = 'admin';
-const DEMO_ADMIN_PASSWORD = 'admin123';
-
 export default function AdminLogin({ onLoginSuccess }) {
-  const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('admin123');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -21,26 +18,14 @@ export default function AdminLogin({ onLoginSuccess }) {
     if (errorMessage) setErrorMessage('');
   };
 
-  const saveSessionAndProceed = (officerData, token) => {
-    sessionStorage.setItem('isAdmin', 'true');
-    sessionStorage.setItem(
-      'ibvap_auth_user',
-      JSON.stringify(officerData || {
-        user_id: 'admin',
-        username: 'admin',
-        role: 'ADMIN',
-        clearance_level: 4,
-        rank: 'Sector Commander',
-        name: 'Insp. Vikram Singh',
-        full_name: 'Insp. Vikram Singh',
-        badge: 'BSF-8841',
-        badge_id: 'BSF-8841',
-        loginTime: new Date().toISOString(),
-      })
-    );
-    if (token) {
-      sessionStorage.setItem('ibvap_token', token);
+  const saveSessionAndProceed = (officerData) => {
+    if (!officerData) {
+      setIsLoading(false);
+      setErrorMessage('Authentication service returned an invalid session.');
+      return;
     }
+    sessionStorage.setItem('isAdmin', 'true');
+    sessionStorage.setItem('ibvap_auth_user', JSON.stringify(officerData));
     setIsLoading(false);
     onLoginSuccess();
   };
@@ -73,7 +58,7 @@ export default function AdminLogin({ onLoginSuccess }) {
 
       if (response.ok) {
         const data = await response.json();
-        saveSessionAndProceed(data.officer, data.token);
+        saveSessionAndProceed(data.officer);
         return;
       }
 
@@ -91,28 +76,17 @@ export default function AdminLogin({ onLoginSuccess }) {
 
       // Backend gateway/proxy error (e.g. 500, 502, 503, 504 when backend is offline)
       if (response.status >= 500) {
-        if (trimmedUser === DEMO_ADMIN_USERNAME && password === DEMO_ADMIN_PASSWORD) {
-          saveSessionAndProceed(null, null);
-          return;
-        } else {
-          setIsLoading(false);
-          setErrorMessage('Invalid admin credentials');
-          return;
-        }
+        setIsLoading(false);
+        setErrorMessage('Authentication service is unavailable. Please try again later.');
+        return;
       }
 
       setIsLoading(false);
       setErrorMessage('Invalid admin credentials');
     } catch (err) {
-      // Offline fallback: Network failure / backend offline
-      if (trimmedUser === DEMO_ADMIN_USERNAME && password === DEMO_ADMIN_PASSWORD) {
-        saveSessionAndProceed(null, null);
-        return;
-      } else {
-        setIsLoading(false);
-        setErrorMessage('Invalid admin credentials');
-        return;
-      }
+      setIsLoading(false);
+      setErrorMessage('Authentication service is unavailable. Please try again later.');
+      return;
     }
   };
 
@@ -139,12 +113,11 @@ export default function AdminLogin({ onLoginSuccess }) {
           <div className="admin-login-badge">ADMIN LOGIN</div>
         </div>
 
-        {/* Demo Credentials Notice */}
-        <div className="login-hint-box">
+        <div className="login-hint-box" role="note" aria-label="SIH 2026 demo credentials">
           <div style={{ fontWeight: 700, color: 'var(--cyan-glow)', marginBottom: 4 }}>
-            🎖️ SIH 2026 DEMO CREDENTIALS:
+            SIH 2026 DEMO CREDENTIALS
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
             <span>Username: <code>admin</code></span>
             <span>Password: <code>admin123</code></span>
           </div>
@@ -167,7 +140,7 @@ export default function AdminLogin({ onLoginSuccess }) {
               className="tactical-input"
               value={username}
               onChange={handleUsernameChange}
-              placeholder="admin"
+              placeholder="Enter username"
               autoComplete="username"
               autoFocus
               required

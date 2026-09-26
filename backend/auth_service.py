@@ -14,11 +14,28 @@ from typing import Optional, Dict, Any
 
 from backend.database import get_db_connection, hash_password
 
-SECRET_KEY = os.getenv("IBVAP_AUTH_SECRET", "IBVAP_TACTICAL_DEFENSE_AUTH_KEY_2026_SIH26187")
+APP_ENV = os.getenv("IBVAP_ENV", "development").strip().lower()
+IS_PRODUCTION = APP_ENV == "production"
+DEMO_BYPASS_AUTH = os.getenv("DEMO_BYPASS_AUTH", "false").strip().lower() in {"1", "true", "yes", "on"}
+DEMO_CREDENTIALS_ENABLED = os.getenv(
+    "IBVAP_ENABLE_DEMO_CREDENTIALS", "false" if IS_PRODUCTION else "true"
+).strip().lower() in {"1", "true", "yes", "on"}
+configured_secret = os.getenv("IBVAP_AUTH_SECRET")
+if IS_PRODUCTION and not configured_secret:
+    raise RuntimeError("IBVAP_AUTH_SECRET must be set when IBVAP_ENV=production")
+if IS_PRODUCTION and (DEMO_BYPASS_AUTH or DEMO_CREDENTIALS_ENABLED):
+    raise RuntimeError("Demo authentication must be disabled when IBVAP_ENV=production")
+SECRET_KEY = configured_secret or secrets.token_hex(32)
+SECURE_SESSION_COOKIE = IS_PRODUCTION
 SESSION_COOKIE_NAME = "ibvap_session"
 DEFAULT_SESSION_DURATION = 86400  # 24 hours
 REMEMBER_SESSION_DURATION = 604800 # 7 days
-DEMO_BYPASS_AUTH = os.getenv("DEMO_BYPASS_AUTH", "false").strip().lower() in {"1", "true", "yes", "on"}
+DEMO_DEFAULT_PASSWORDS = {
+    "admin": "admin123",
+    "hq-cdr-01": "Commander@2026",
+    "op-sect-04": "Operator@2026",
+    "operator1": "Border@2026",
+}
 
 
 def get_demo_officer(user_id: str = "") -> Dict[str, Any]:
@@ -54,8 +71,11 @@ def authenticate_credentials(user_id: str, password: str) -> Optional[Dict[str, 
     if DEMO_BYPASS_AUTH:
         return get_demo_officer(clean_user)
 
+    if not DEMO_CREDENTIALS_ENABLED and DEMO_DEFAULT_PASSWORDS.get(clean_user.lower()) == password:
+        return None
+
     # 1. SIH 2026 Primary Demo Credentials: admin / admin123
-    if clean_user.lower() == "admin":
+    if clean_user.lower() == "admin" and DEMO_CREDENTIALS_ENABLED:
         if password != "admin123":
             return None
         try:

@@ -21,6 +21,9 @@ from backend.auth_router import auth_router, get_current_officer
 from backend.auth_service import SESSION_COOKIE_NAME, create_session_token, authenticate_credentials, DEMO_BYPASS_AUTH
 from backend.audit_service import audit_event
 
+if os.getenv("IBVAP_ENV", "development").strip().lower() == "production":
+    raise RuntimeError("main.py is a legacy demo app; use python run.py for production.")
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 STATIC_DIR = os.path.join(BASE_DIR, "static")

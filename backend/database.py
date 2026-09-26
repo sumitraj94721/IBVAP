@@ -11,10 +11,18 @@ import time
 import json
 from typing import Dict, Any, Optional
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "security.db")
+APP_ENV = os.getenv("IBVAP_ENV", "development").strip().lower()
+IS_PRODUCTION = APP_ENV == "production"
+DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "security.db")
+DB_PATH = os.path.abspath(os.getenv("IBVAP_DB_PATH", DEFAULT_DB_PATH))
+if IS_PRODUCTION and not os.getenv("IBVAP_DB_PATH"):
+    raise RuntimeError("IBVAP_DB_PATH must point to deployment-owned storage when IBVAP_ENV=production")
+if IS_PRODUCTION and DB_PATH == os.path.abspath(DEFAULT_DB_PATH):
+    raise RuntimeError("Production must not use the repository's bundled security.db")
 
 
 def get_db_connection() -> sqlite3.Connection:
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
@@ -216,6 +224,8 @@ def init_db():
             "assigned_sector": "Sector Alpha - Post 04"
         }
     ]
+    if IS_PRODUCTION:
+        seed_operators = []
 
     for op in seed_operators:
         cursor.execute("SELECT id FROM operators WHERE user_id = ?", (op["user_id"],))
@@ -253,6 +263,8 @@ def init_db():
         {"id": "CAM-03", "name": "Sector Charlie [Riverine FLIR Thermal]", "sector": "Sector Charlie", "source_type": "IP_CCTV", "stream_url": "/video_feed/cam3", "status": "ONLINE", "fps": 25.0},
         {"id": "CAM-04", "name": "Sector Delta [Checkpost Barrier ANPR]", "sector": "Sector Delta", "source_type": "ANPR_BARRIER", "stream_url": "/video_feed/cam4", "status": "ONLINE", "fps": 25.0},
     ]
+    if IS_PRODUCTION:
+        seed_cameras = []
     for cam in seed_cameras:
         cursor.execute("SELECT id FROM cameras WHERE id = ?", (cam["id"],))
         if not cursor.fetchone():
@@ -263,7 +275,7 @@ def init_db():
 
     # Seed known_suspects baseline watchlist entry if empty
     cursor.execute("SELECT COUNT(*) FROM known_suspects")
-    if cursor.fetchone()[0] == 0:
+    if not IS_PRODUCTION and cursor.fetchone()[0] == 0:
         cursor.execute("""
             INSERT INTO known_suspects (person_code, display_name, embedding, embedding_model, created_at, updated_at, status, metadata)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)

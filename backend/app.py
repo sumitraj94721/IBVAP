@@ -50,14 +50,51 @@ app = FastAPI(
     version="2.5.0"
 )
 
-# Enable CORS for frontend integration
+APP_ENV = os.getenv("IBVAP_ENV", "development").strip().lower()
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("IBVAP_CORS_ORIGINS", "").split(",")
+    if origin.strip()
+]
+if APP_ENV == "production" and not CORS_ORIGINS:
+    raise RuntimeError("IBVAP_CORS_ORIGINS must list the deployed frontend origin(s) in production")
+if not CORS_ORIGINS:
+    CORS_ORIGINS = ["http://localhost:5176", "http://127.0.0.1:5176"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+PUBLIC_API_PATHS = {
+    "/api/status",
+    "/api/ai/status",
+    "/api/cameras/cam2/status",
+    "/api/auth/login",
+    "/api/login",
+}
+
+
+@app.middleware("http")
+async def require_production_session(request: Request, call_next):
+    path = request.url.path
+    protected = (
+        path.startswith("/api/") and path not in PUBLIC_API_PATHS
+    ) or path == "/video_feed" or path.startswith("/video_feed/") or path.startswith("/static/snapshots/")
+    if APP_ENV == "production" and protected and request.method != "OPTIONS":
+        if not await get_current_officer(request):
+            return JSONResponse({"detail": "Authentication required"}, status_code=401)
+    return await call_next(request)
+
+
+async def require_production_websocket_session(websocket: WebSocket) -> bool:
+    if APP_ENV == "production" and not await get_current_officer(websocket):
+        await websocket.close(code=1008)
+        return False
+    return True
 
 # Include RBAC Authentication Router
 app.include_router(auth_router)
@@ -553,6 +590,8 @@ async def websocket_video_stream(websocket: WebSocket):
     executes unified multi-object AI pipeline, and returns normalized bounding boxes,
     tracks, protected zone state, face matches, and alerts.
     """
+    if not await require_production_websocket_session(websocket):
+        return
     await websocket.accept()
     logger.info("Command Center CCTV WebSocket connected.")
 
@@ -708,6 +747,8 @@ async def websocket_alerts_endpoint(websocket: WebSocket):
     """
     Real-time alert broadcast hub for Command Center notifications.
     """
+    if not await require_production_websocket_session(websocket):
+        return
     await websocket.accept()
     connected_alert_clients.append(websocket)
 
