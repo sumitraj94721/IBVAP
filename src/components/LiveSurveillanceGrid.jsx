@@ -1282,6 +1282,11 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
 
             const emotion = target.emotion || {};
             const conf = target.detection_confidence || emotion.confidence || 0;
+            const exprName = String((emotion.primary_expression || 'UNAVAILABLE')).toUpperCase();
+            const exprConfidence = Number.isFinite(Number(emotion.confidence)) ? Number(emotion.confidence) : 0;
+            const normalizedExpr = exprName === 'UNAVAILABLE' || exprConfidence <= 0
+              ? 'UNAVAILABLE'
+              : (exprConfidence < 35 ? 'UNCERTAIN' : exprName);
             const targetId = target.target_id || 'P-001';
             const activity = target.activity || target.movement || 'STANDING';
             const holdingStatus = target.holding_status || 'NONE';
@@ -1352,10 +1357,17 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
             } else {
               lines.push({ text: `FACE: NOT VISIBLE`, color: '#94a3b8' });
             }
-            // Line 6: Movement direction and estimated relative speed
+            // Line 6: Expression / model honesty
+            const expressionLabel = normalizedExpr === 'UNAVAILABLE'
+              ? 'EXPRESSION: UNAVAILABLE'
+              : normalizedExpr === 'UNCERTAIN'
+                ? `EXPRESSION: UNCERTAIN (${exprConfidence.toFixed(0)}%)`
+                : `EXPRESSION: ${normalizedExpr} (${exprConfidence.toFixed(0)}%)`;
+            lines.push({ text: expressionLabel, color: normalizedExpr === 'UNAVAILABLE' ? '#94a3b8' : '#f8fafc', bold: true });
+            // Line 7: Movement direction and estimated relative speed
             const speedVal = target.relative_speed ? `${target.relative_speed.toFixed(1)} px/s [EST]` : '0.0 px/s';
             lines.push({ text: `${direction || 'STATIONARY'} ▶ ${speedVal}`, color: '#38bdf8' });
-            // Line 7: Zone & Loitering
+            // Line 8: Zone & Loitering
             if (loitering) {
               lines.push({ text: `⚠ LOITERING ${dwell.toFixed(0)}s`, color: '#ef4444', bold: true });
             } else if (inZone) {
@@ -3180,6 +3192,7 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                       <div><span style={{ color: '#64748b' }}>Movement:</span> {card.movement} ({card.speed})</div>
                       <div><span style={{ color: '#64748b' }}>Object:</span> <strong style={{ color: card.object !== 'NONE' ? '#fbbf24' : '#94a3b8' }}>{card.object}</strong></div>
                       <div><span style={{ color: '#64748b' }}>Face Status:</span> {card.face_status}</div>
+                      <div><span style={{ color: '#64748b' }}>Expression:</span> <strong style={{ color: '#f8fafc' }}>{card.expression || 'UNAVAILABLE'}</strong></div>
                       <div><span style={{ color: '#64748b' }}>Time Seen:</span> {card.time_seen}</div>
                     </div>
                     {card.behavioral_signals && card.behavioral_signals.length > 0 && (

@@ -208,8 +208,10 @@ class SurveillanceVisionPipeline:
                             "similarity": 0.0
                         },
                         "emotion": {
-                            "primary_expression": "Neutral",
-                            "confidence": 60.0
+                            "primary_expression": "UNAVAILABLE",
+                            "confidence": 0.0,
+                            "model_status": "OFFLINE",
+                            "is_available": False,
                         }
                     }
                     self._last_face_results[tid] = face_info
@@ -220,7 +222,7 @@ class SurveillanceVisionPipeline:
                     "has_face": False,
                     "landmarks": [],
                     "match": {"face_match": False, "status": "UNKNOWN PERSON", "person_code": None, "display_name": "UNKNOWN", "similarity": 0.0},
-                    "emotion": {"primary_expression": "Neutral", "confidence": 50.0}
+                    "emotion": {"primary_expression": "UNAVAILABLE", "confidence": 0.0, "model_status": "OFFLINE", "is_available": False}
                 }
 
             if face_info["match"].get("face_match"):
@@ -262,7 +264,7 @@ class SurveillanceVisionPipeline:
                 "face_status": face_status,
                 "face_match": face_info["match"],
                 "landmarks": face_info.get("landmarks", []),
-                "emotion": face_info.get("emotion", {"primary_expression": "Neutral", "confidence": 50.0}),
+                "emotion": face_info.get("emotion", {"primary_expression": "UNAVAILABLE", "confidence": 0.0, "model_status": "OFFLINE", "is_available": False}),
                 "hud_label": f"PERSON {tid} [{p_trk['confidence_pct']:.0f}%] | {p_trk['direction']}",
                 "hud_name": hud_name,
             }
@@ -695,8 +697,14 @@ class SurveillanceVisionPipeline:
 
             # Facial expression (Diagnostic ONLY — NEVER a threat classifier by itself)
             emotion_obj = pt.get("emotion", {})
-            expr_name = (emotion_obj.get("primary_expression") or "Neutral").upper()
-            expr_conf = float(emotion_obj.get("confidence", 60.0))
+            expr_name = (emotion_obj.get("primary_expression") or "UNAVAILABLE").upper()
+            expr_conf = float(emotion_obj.get("confidence", 0.0) or 0.0)
+            if expr_name in ("UNAVAILABLE", "MODEL_OFFLINE", "N/A") or expr_conf <= 0:
+                expression_display = "UNAVAILABLE"
+            elif expr_conf < 35.0:
+                expression_display = "UNCERTAIN"
+            else:
+                expression_display = expr_name
 
             # 5. Explainable Risk Engine (0 - 100)
             risk_score = 10  # Baseline monitored presence
@@ -791,6 +799,11 @@ class SurveillanceVisionPipeline:
                 face_card_status = "NO FACE DETECTED"
 
             # Build structured PERSON ACTIVITY CARD (Requirement 5)
+            expression_text = (
+                "UNAVAILABLE"
+                if expression_display == "UNAVAILABLE"
+                else f"{expression_display} ({expr_conf:.0f}%)"
+            )
             pt["activity_card"] = {
                 "person_id": f"PERSON #{tid}",
                 "track_id": tid,
@@ -805,7 +818,7 @@ class SurveillanceVisionPipeline:
                 "time_seen": time_seen_str,
                 "dwell_seconds": round(dwell, 1),
                 "face_status": face_card_status,
-                "expression": f"{expr_name} ({expr_conf:.0f}%) [NON-THREAT DIAGNOSTIC]",
+                "expression": expression_text,
                 "behavioral_signals": behavioral_signals,
                 "risk": pt["risk_level"],
                 "risk_score": risk_score,
