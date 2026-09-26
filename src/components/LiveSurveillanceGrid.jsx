@@ -1383,10 +1383,21 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
             const h = nh * feedHeight;
 
             const emotion = target.emotion || {};
+<<<<<<< HEAD
             const confidence = target.detection_confidence ?? target.confidence_pct;
             const confidenceLabel = confidence != null && Number.isFinite(Number(confidence)) ? ` (${Number(confidence).toFixed(0)}%)` : '';
             const targetId = target.target_id || target.track_id;
             const activity = target.activity || target.movement || 'UNAVAILABLE';
+=======
+            const conf = target.detection_confidence || emotion.confidence || 0;
+            const exprName = String((emotion.primary_expression || 'UNAVAILABLE')).toUpperCase();
+            const exprConfidence = Number.isFinite(Number(emotion.confidence)) ? Number(emotion.confidence) : 0;
+            const normalizedExpr = exprName === 'UNAVAILABLE' || exprConfidence <= 0
+              ? 'UNAVAILABLE'
+              : (exprConfidence < 35 ? 'UNCERTAIN' : exprName);
+            const targetId = target.target_id || 'P-001';
+            const activity = target.activity || target.movement || 'STANDING';
+>>>>>>> 4a6833b02d4cadc50ae6d8cd4dfe524a43c05219
             const holdingStatus = target.holding_status || 'NONE';
             const direction = target.direction || 'DIRECTION UNAVAILABLE';
             const inZone = target.in_restricted_zone || false;
@@ -1455,6 +1466,7 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
             } else {
               lines.push({ text: `FACE: NOT DETECTED`, color: '#94a3b8' });
             }
+<<<<<<< HEAD
             // Line 6: Facial Expression (ONLY when face is detected; never invent when face missing)
             const exprRaw = (emotion.primary_expression || target.expression || 'NOT AVAILABLE').toString().toUpperCase();
             const exprConf = emotion.confidence ?? target.expression_confidence;
@@ -1467,6 +1479,18 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
             // Line 7: Movement direction and estimated relative speed
             const speedVal = target.relative_speed != null ? `${Number(target.relative_speed).toFixed(1)} px/s [EST]` : 'SPEED UNAVAILABLE';
             lines.push({ text: `${direction} ▶ ${speedVal}`, color: '#38bdf8' });
+=======
+            // Line 6: Expression / model honesty
+            const expressionLabel = normalizedExpr === 'UNAVAILABLE'
+              ? 'EXPRESSION: UNAVAILABLE'
+              : normalizedExpr === 'UNCERTAIN'
+                ? `EXPRESSION: UNCERTAIN (${exprConfidence.toFixed(0)}%)`
+                : `EXPRESSION: ${normalizedExpr} (${exprConfidence.toFixed(0)}%)`;
+            lines.push({ text: expressionLabel, color: normalizedExpr === 'UNAVAILABLE' ? '#94a3b8' : '#f8fafc', bold: true });
+            // Line 7: Movement direction and estimated relative speed
+            const speedVal = target.relative_speed ? `${target.relative_speed.toFixed(1)} px/s [EST]` : '0.0 px/s';
+            lines.push({ text: `${direction || 'STATIONARY'} ▶ ${speedVal}`, color: '#38bdf8' });
+>>>>>>> 4a6833b02d4cadc50ae6d8cd4dfe524a43c05219
             // Line 8: Zone & Loitering
             if (loitering) {
               lines.push({ text: `⚠ LOITERING ${dwell.toFixed(0)}s`, color: '#ef4444', bold: true });
@@ -3396,8 +3420,13 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                       <div><span style={{ color: '#64748b' }}>Activity:</span> <strong style={{ color: '#00f0ff' }}>{card.activity}</strong></div>
                       <div><span style={{ color: '#64748b' }}>Movement:</span> {card.movement} ({card.speed})</div>
                       <div><span style={{ color: '#64748b' }}>Object:</span> <strong style={{ color: card.object !== 'NONE' ? '#fbbf24' : '#94a3b8' }}>{card.object}</strong></div>
+<<<<<<< HEAD
                       <div><span style={{ color: '#64748b' }}>Face:</span> <strong style={{ color: card.face === 'DETECTED' ? '#10b981' : '#94a3b8' }}>{card.face || card.face_status}</strong> ({card.identity_status || 'UNKNOWN'})</div>
                       <div><span style={{ color: '#64748b' }}>Expression:</span> <strong style={{ color: '#38bdf8' }}>{card.expression_display || 'NOT AVAILABLE'}</strong></div>
+=======
+                      <div><span style={{ color: '#64748b' }}>Face Status:</span> {card.face_status}</div>
+                      <div><span style={{ color: '#64748b' }}>Expression:</span> <strong style={{ color: '#f8fafc' }}>{card.expression || 'UNAVAILABLE'}</strong></div>
+>>>>>>> 4a6833b02d4cadc50ae6d8cd4dfe524a43c05219
                       <div><span style={{ color: '#64748b' }}>Time Seen:</span> {card.time_seen}</div>
                       <div><span style={{ color: '#64748b' }}>Facial Signal:</span> <span style={{ color: '#94a3b8', fontSize: 8.2 }}>{card.facial_signal_note || 'OBSERVATION ONLY'}</span></div>
                     </div>

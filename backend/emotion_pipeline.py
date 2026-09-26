@@ -49,6 +49,8 @@ class EmotionClassifier:
     def __init__(self, model_path: Optional[str] = None):
         self.model_path = model_path or DEFAULT_MODEL_PATH
         self.net = None
+        self.is_available = False
+        self.model_status = "OFFLINE"
         self._ensure_model_exists()
         self._load_network()
 
@@ -67,18 +69,24 @@ class EmotionClassifier:
 
     def _load_network(self):
         """Initializes OpenCV DNN with the ONNX graph."""
+        self.is_available = False
+        self.model_status = "OFFLINE"
         try:
             if os.path.exists(self.model_path) and os.path.getsize(self.model_path) > 1000:
                 self.net = cv2.dnn.readNetFromONNX(self.model_path)
                 # Set OpenCV backend to OpenCV CPU or OpenCL if available
                 self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
                 self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+                self.is_available = self.net is not None
+                self.model_status = "ONLINE" if self.is_available else "OFFLINE"
                 logger.info("Emotion DNN network initialized successfully.")
             else:
+                self.net = None
                 logger.warning(f"Emotion model file missing or empty at {self.model_path}. Fallback mode active.")
         except Exception as e:
             logger.error(f"Error loading ONNX model with cv2.dnn: {e}")
             self.net = None
+            self.model_status = "OFFLINE"
 
     def analyze(self, face_bgr: np.ndarray) -> Dict[str, Any]:
         """
@@ -95,6 +103,9 @@ class EmotionClassifier:
                 - threat_profile: dict with status, level, color, is_threat
                 - distribution: dict of all emotions and percentage scores
         """
+        if self.net is None:
+            return self._default_result()
+
         if face_bgr is None or face_bgr.size == 0 or face_bgr.shape[0] < 10 or face_bgr.shape[1] < 10:
             return self._default_result()
 
@@ -108,17 +119,28 @@ class EmotionClassifier:
             # 2. Resize to 64x64 input dimension required by FER+
             resized = cv2.resize(gray, (64, 64), interpolation=cv2.INTER_AREA)
 
-            if self.net is not None:
-                # FER+ expects shape [1, 1, 64, 64], float32 in [0, 255]
-                blob = resized.astype(np.float32).reshape(1, 1, 64, 64)
-                self.net.setInput(blob)
-                logits = self.net.forward()[0]  # shape (8,)
+            # FER+ expects shape [1, 1, 64, 64], float32 in [0, 255]
+            blob = resized.astype(np.float32).reshape(1, 1, 64, 64)
+            self.net.setInput(blob)
+            logits = self.net.forward()[0]  # shape (8,)
 
+<<<<<<< HEAD
                 # Softmax calculation with numerical stability
                 exp_logits = np.exp(logits - np.max(logits))
                 probs = exp_logits / np.sum(exp_logits)
             else:
                 return self._default_result()
+=======
+            if logits.size == 0 or not np.all(np.isfinite(logits)):
+                return self._default_result()
+
+            # Softmax calculation with numerical stability
+            exp_logits = np.exp(logits - np.max(logits))
+            sum_exp = float(np.sum(exp_logits))
+            if not np.isfinite(sum_exp) or sum_exp <= 0.0:
+                return self._default_result()
+            probs = exp_logits / sum_exp
+>>>>>>> 4a6833b02d4cadc50ae6d8cd4dfe524a43c05219
 
             # Build probability map
             distribution = {label: float(round(p * 100, 1)) for label, p in zip(EMOTION_LABELS, probs)}
@@ -138,7 +160,9 @@ class EmotionClassifier:
                 "label": f"{primary_label} ({confidence:.0f}%)",
                 "available": True,
                 "threat_profile": threat,
-                "distribution": distribution
+                "distribution": distribution,
+                "model_status": self.model_status,
+                "is_available": True,
             }
 
         except Exception as e:
@@ -150,7 +174,14 @@ class EmotionClassifier:
             "primary_expression": "UNAVAILABLE",
             "confidence": 0.0,
             "label": "UNAVAILABLE",
+<<<<<<< HEAD
             "available": False,
             "threat_profile": {"level": "OFFLINE", "status": "UNAVAILABLE", "color": "#64748b", "is_threat": False},
             "distribution": {label: 0.0 for label in EMOTION_LABELS}
+=======
+            "threat_profile": {"level": "LOW", "status": "MODEL_OFFLINE", "color": "#94a3b8", "is_threat": False},
+            "distribution": {label: 0.0 for label in EMOTION_LABELS},
+            "model_status": "OFFLINE",
+            "is_available": False,
+>>>>>>> 4a6833b02d4cadc50ae6d8cd4dfe524a43c05219
         }

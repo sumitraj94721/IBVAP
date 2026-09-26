@@ -216,6 +216,19 @@ def test_j_multi_camera_incident_fusion():
     print("Test J Passed (Multi-Camera Incident Fusion, Timeline, Snapshots & Smart Camera Prioritization verified).")
     return True
 
+def test_k_expression_model_honest_status():
+    print("\n--- TEST K: Honest Expression Model Status ---")
+    from backend.emotion_pipeline import EmotionClassifier
+    model = EmotionClassifier()
+    default = model._default_result()
+    assert default["primary_expression"] == "UNAVAILABLE", "Model fallback must not silently claim Neutral"
+    assert default["confidence"] == 0.0, "Unavailable model confidence must be zero"
+    model.net = None
+    empty = model.analyze(np.zeros((16, 16, 3), dtype=np.uint8))
+    assert empty["primary_expression"] == "UNAVAILABLE", "Offline model must report UNAVAILABLE instead of Neutral"
+    print("Test K Passed (Expression failure mode now reports UNAVAILABLE instead of fake Neutral).")
+    return True
+
 if __name__ == "__main__":
     print("=================================================================")
     print("RUNNING IBVAP ACCEPTANCE TESTS A THROUGH J")
