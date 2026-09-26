@@ -8,7 +8,9 @@ export default function AiAnalyticsView({ threatLevel, kpiData, aiTelemetry }) {
   const liveStats = aiTelemetry?.aiStats || {};
   const livePersons = aiTelemetry?.targets?.length ?? kpiData?.persons ?? 0;
   const liveVehicles = aiTelemetry?.vehicles?.length ?? kpiData?.vehicles ?? 0;
-  const activeTracksCount = (aiTelemetry?.tracks?.length) || (livePersons + liveVehicles);
+  const liveObjectsList = aiTelemetry?.otherObjects || aiTelemetry?.other_objects || [];
+  const liveObjects = liveObjectsList.length || (kpiData?.objects ?? 0);
+  const activeTracksCount = (aiTelemetry?.tracks?.length) || (livePersons + liveVehicles + liveObjects);
   const faceMatchesCount = aiTelemetry?.faceMatches?.length ?? kpiData?.faceMatches ?? 0;
   const anprEventsCount = aiTelemetry?.anprEvents?.length ?? kpiData?.anprEvents ?? 0;
   const liveZoneIntrusions = aiTelemetry?.zoneIntrusions ?? kpiData?.intrusions ?? 0;
@@ -56,6 +58,7 @@ export default function AiAnalyticsView({ threatLevel, kpiData, aiTelemetry }) {
         {[
           { label: 'PERSONS', value: String(livePersons).padStart(2, '0'), color: 'var(--cyan-glow)' },
           { label: 'VEHICLES', value: String(liveVehicles).padStart(2, '0'), color: '#00d2ff' },
+          { label: 'OBJECTS', value: String(liveObjects).padStart(2, '0'), color: '#10b981' },
           { label: 'ACTIVE TRACKS', value: String(activeTracksCount).padStart(2, '0'), color: '#a78bfa' },
           { label: 'FACE MATCHES', value: String(faceMatchesCount).padStart(2, '0'), color: faceMatchesCount > 0 ? 'var(--status-green)' : 'var(--text-dim)' },
           { label: 'ANPR EVENTS', value: String(anprEventsCount).padStart(2, '0'), color: anprEventsCount > 0 ? '#38bdf8' : 'var(--text-dim)' },
@@ -76,7 +79,7 @@ export default function AiAnalyticsView({ threatLevel, kpiData, aiTelemetry }) {
       {/* ── Model Pipeline Architecture Cards ──────────────────────────── */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(4, 1fr)',
+        gridTemplateColumns: 'repeat(5, 1fr)',
         gap: 12
       }}>
         <div className="kpi-card" style={{ padding: 14 }}>
@@ -85,7 +88,7 @@ export default function AiAnalyticsView({ threatLevel, kpiData, aiTelemetry }) {
             {yoloModel.toUpperCase()}
           </span>
           <span style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 4 }}>
-            Device: <strong>{yoloDevice}</strong> | Multi-Class Surveillance
+            Device: <strong>{yoloDevice}</strong> | 80 COCO Classes
           </span>
         </div>
 
@@ -95,7 +98,7 @@ export default function AiAnalyticsView({ threatLevel, kpiData, aiTelemetry }) {
             BYTETRACK / IOU
           </span>
           <span style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 4 }}>
-            Persistent Target IDs (P-xxx &amp; V-xxx)
+            Persistent IDs (P-xxx, V-xxx, O-xxx)
           </span>
         </div>
 
@@ -118,15 +121,25 @@ export default function AiAnalyticsView({ threatLevel, kpiData, aiTelemetry }) {
             {anprStatus}
           </span>
         </div>
+
+        <div className="kpi-card" style={{ padding: 14, borderColor: '#fbbf24' }}>
+          <span className="kpi-label" style={{ color: '#fbbf24' }}>WEAPON DETECTION</span>
+          <span className="kpi-value" style={{ color: '#fbbf24', fontSize: 12 }}>
+            NOT CONFIGURED
+          </span>
+          <span style={{ fontSize: 9, color: 'var(--text-dim)', marginTop: 4, lineHeight: 1.5 }}>
+            Standard COCO model does not reliably detect weapons. A separate trained model is required.
+          </span>
+        </div>
       </div>
 
       {/* ── Active Multi-Object Tracks Split Grid ──────────────────────── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14 }}>
         {/* Person Tracks Table */}
         <div className="chart-card">
           <div className="chart-header">
             <span>👤 ACTIVE PERSON TRACKS [{livePersons}]</span>
-            <span style={{ fontSize: 10, color: 'var(--cyan-glow)' }}>P-SERIES IDENTIFIERS</span>
+            <span style={{ fontSize: 10, color: 'var(--cyan-glow)' }}>P-SERIES</span>
           </div>
 
           <div style={{ marginTop: 10, maxHeight: 180, overflowY: 'auto' }}>
@@ -140,10 +153,8 @@ export default function AiAnalyticsView({ threatLevel, kpiData, aiTelemetry }) {
                   <tr style={{ color: 'var(--text-dim)', borderBottom: '1px solid var(--border-subtle)', textAlign: 'left' }}>
                     <th style={{ padding: '4px 6px' }}>TRACK</th>
                     <th>CONF</th>
-                    <th>DIRECTION</th>
-                    <th>SPEED</th>
-                    <th>FACE MATCH</th>
-                    <th>ZONE</th>
+                    <th>FACE</th>
+                    <th>RISK</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -151,13 +162,11 @@ export default function AiAnalyticsView({ threatLevel, kpiData, aiTelemetry }) {
                     <tr key={t.target_id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
                       <td style={{ padding: '6px', color: 'var(--cyan-glow)', fontWeight: 700 }}>{t.target_id}</td>
                       <td>{t.detection_confidence?.toFixed(0)}%</td>
-                      <td style={{ color: '#38bdf8' }}>{t.direction || 'STAT'}</td>
-                      <td>{t.relative_speed ? `${t.relative_speed.toFixed(1)} px/s` : '0.0'}</td>
-                      <td style={{ color: t.face_match?.face_match ? 'var(--status-green)' : 'var(--text-dim)' }}>
-                        {t.face_match?.face_match ? t.face_match.display_name : 'UNKNOWN'}
+                      <td style={{ color: t.face_match?.face_match ? 'var(--status-green)' : t.has_face ? '#fbbf24' : 'var(--text-dim)' }}>
+                        {t.face_match?.face_match ? t.face_match.display_name : t.has_face ? 'DETECTED/UNK' : 'NOT VISIBLE'}
                       </td>
-                      <td style={{ color: t.in_restricted_zone ? 'var(--alert-red)' : 'var(--status-green)' }}>
-                        {t.in_restricted_zone ? 'RESTRICTED' : 'CLEAR'}
+                      <td style={{ color: t.in_restricted_zone ? 'var(--alert-red)' : '#38bdf8', fontWeight: 700 }}>
+                        {t.risk_level || (t.in_restricted_zone ? 'HIGH RISK' : 'MONITORED')}
                       </td>
                     </tr>
                   ))}
@@ -171,7 +180,7 @@ export default function AiAnalyticsView({ threatLevel, kpiData, aiTelemetry }) {
         <div className="chart-card">
           <div className="chart-header">
             <span>🚗 ACTIVE VEHICLE TRACKS [{liveVehicles}]</span>
-            <span style={{ fontSize: 10, color: '#00d2ff' }}>V-SERIES IDENTIFIERS</span>
+            <span style={{ fontSize: 10, color: '#00d2ff' }}>V-SERIES</span>
           </div>
 
           <div style={{ marginTop: 10, maxHeight: 180, overflowY: 'auto' }}>
@@ -186,9 +195,8 @@ export default function AiAnalyticsView({ threatLevel, kpiData, aiTelemetry }) {
                     <th style={{ padding: '4px 6px' }}>TRACK</th>
                     <th>TYPE</th>
                     <th>CONF</th>
-                    <th>DIRECTION</th>
-                    <th>SPEED</th>
                     <th>PLATE</th>
+                    <th>RISK</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -197,10 +205,50 @@ export default function AiAnalyticsView({ threatLevel, kpiData, aiTelemetry }) {
                       <td style={{ padding: '6px', color: '#00d2ff', fontWeight: 700 }}>{v.track_id}</td>
                       <td>{v.object_type || 'VEHICLE'}</td>
                       <td>{v.confidence?.toFixed(0)}%</td>
-                      <td style={{ color: '#38bdf8' }}>{v.direction || 'STAT'}</td>
-                      <td>{v.relative_speed ? `${v.relative_speed.toFixed(1)} px/s` : '0.0'}</td>
                       <td style={{ color: v.plate && v.plate !== 'N/A' ? '#f59e0b' : 'var(--text-dim)', fontWeight: 600 }}>
                         {v.plate || 'STANDBY'}
+                      </td>
+                      <td style={{ color: v.in_restricted_zone ? 'var(--alert-red)' : '#38bdf8', fontWeight: 700 }}>
+                        {v.risk_level || (v.in_restricted_zone ? 'HIGH RISK' : 'MONITORED')}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+
+        {/* General Object Tracks Table */}
+        <div className="chart-card">
+          <div className="chart-header">
+            <span>📦 ACTIVE OBJECT TRACKS [{liveObjects}]</span>
+            <span style={{ fontSize: 10, color: '#10b981' }}>O-SERIES (COCO)</span>
+          </div>
+
+          <div style={{ marginTop: 10, maxHeight: 180, overflowY: 'auto' }}>
+            {liveObjectsList.length === 0 ? (
+              <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
+                No secondary objects currently in optical view.
+              </div>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                <thead>
+                  <tr style={{ color: 'var(--text-dim)', borderBottom: '1px solid var(--border-subtle)', textAlign: 'left' }}>
+                    <th style={{ padding: '4px 6px' }}>TRACK</th>
+                    <th>OBJECT</th>
+                    <th>CONF</th>
+                    <th>RISK</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {liveObjectsList.map((o, idx) => (
+                    <tr key={o.track_id || `obj-${idx}`} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                      <td style={{ padding: '6px', color: '#10b981', fontWeight: 700 }}>{o.track_id || '--'}</td>
+                      <td style={{ textTransform: 'uppercase', fontWeight: 600 }}>{o.class_name || o.class || 'OBJECT'}</td>
+                      <td>{(o.confidence_pct ?? o.confidence ?? 0).toFixed ? (o.confidence_pct ?? o.confidence ?? 0).toFixed(0) : '--'}%</td>
+                      <td style={{ color: o.risk_level === 'SUSPICIOUS EVENT' ? '#fbbf24' : o.risk_level === 'MONITORED' ? '#38bdf8' : 'var(--status-green)', fontWeight: 700 }}>
+                        {o.risk_level || 'NORMAL'}
                       </td>
                     </tr>
                   ))}

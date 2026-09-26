@@ -56,10 +56,11 @@ export default function App() {
   // Dynamic KPI Data derived from live multi-object AI pipeline
   const activePersons = aiTelemetry?.aiStats?.persons_count ?? aiTelemetry?.targets?.length ?? 0;
   const activeVehicles = aiTelemetry?.aiStats?.vehicles_count ?? aiTelemetry?.vehicles?.length ?? 0;
-  const activeTracks = aiTelemetry?.aiStats?.active_tracks ?? aiTelemetry?.tracks?.length ?? (activePersons + activeVehicles);
-  const faceMatches = aiTelemetry?.aiStats?.face_matches_count ?? aiTelemetry?.face_matches?.length ?? 0;
-  const anprEvents = aiTelemetry?.aiStats?.anpr_events_count ?? aiTelemetry?.anpr_events?.length ?? 0;
-  const activeIntrusions = (aiTelemetry?.zone_intrusions ?? 0) + alerts.filter((a) => a.severity === 'CRITICAL' && a.status === 'ACTIVE').length;
+  const activeObjects = aiTelemetry?.aiStats?.objects_count ?? aiTelemetry?.otherObjects?.length ?? 0;
+  const activeTracks = aiTelemetry?.aiStats?.active_tracks ?? aiTelemetry?.tracks?.length ?? (activePersons + activeVehicles + activeObjects);
+  const faceMatches = aiTelemetry?.aiStats?.face_matches_count ?? aiTelemetry?.faceMatches?.length ?? 0;
+  const anprEvents = aiTelemetry?.aiStats?.anpr_events_count ?? aiTelemetry?.anprEvents?.length ?? 0;
+  const activeIntrusions = aiTelemetry?.zoneIntrusions ?? aiTelemetry?.zone_intrusions ?? 0;
 
   const kpiData = {
     totalCameras: cameras.length,
@@ -67,6 +68,7 @@ export default function App() {
     intrusions: activeIntrusions,
     persons: activePersons,
     vehicles: activeVehicles,
+    objects: activeObjects,
     activeTracks: activeTracks,
     faceMatches: faceMatches,
     anprEvents: anprEvents,

@@ -119,12 +119,13 @@ class SurveillanceVisionPipeline:
             except Exception as e:
                 logger.debug(f"YOLO inference error: {e}")
 
-        # ── 2. Multi-Object Tracking (Persons & Vehicles) ──────────────────────
+        # ── 2. Multi-Object Tracking (Persons, Vehicles, Objects) ─────────────
         all_tracks = self.tracker.update(self._last_yolo_detections, (h, w), camera_id=self.camera_id)
 
-        # Separate person and vehicle tracks
+        # Separate person, vehicle, and general object tracks
         person_tracks = [t for t in all_tracks if t.get("category") == "person"]
         vehicle_tracks = [t for t in all_tracks if t.get("category") == "vehicle"]
+        object_tracks = [t for t in all_tracks if t.get("category") not in ("person", "vehicle")]
 
         # ── 3. Face Recognition on Person Tracks ─────────────────────────────
         # Only run face recognition on detected person crops every 3rd frame
@@ -202,27 +203,44 @@ class SurveillanceVisionPipeline:
 
             # Build enriched person target dictionary for HUD and dashboard
             disp_name = face_info["match"].get("display_name")
+            has_face = bool(face_info.get("has_face", False))
+            if disp_name and disp_name != "UNKNOWN":
+                hud_name = f"KNOWN: {disp_name} ({face_info['match'].get('similarity', 0)*100:.0f}%)"
+                face_status = "KNOWN"
+            elif has_face:
+                hud_name = "FACE DETECTED: UNKNOWN"
+                face_status = "FACE DETECTED / UNKNOWN"
+            else:
+                hud_name = "FACE: NOT VISIBLE"
+                face_status = "NO FACE VISIBLE"
+
             p_trk_enriched = {
                 "target_id": tid,
+                "track_id": tid,
+                "camera_id": self.camera_id,
                 "box": p_box,
+                "bbox": p_box,
                 "normalized_box": p_trk["normalized_box"],
                 "detection_confidence": p_trk["confidence_pct"],
+                "confidence_pct": p_trk["confidence_pct"],
                 "target_type": "person",
+                "category": "person",
                 "class_name": "person",
                 "direction": p_trk["direction"],
                 "movement": p_trk["movement"],
                 "relative_speed": p_trk["relative_speed"],
                 "speed_label": p_trk["speed_label"],
                 "dwell_seconds": p_trk["dwell_seconds"],
+                "first_seen": p_trk["first_seen"],
+                "last_seen": p_trk["last_seen"],
+                "has_face": has_face,
+                "face_status": face_status,
                 "face_match": face_info["match"],
                 "landmarks": face_info.get("landmarks", []),
                 "emotion": face_info.get("emotion", {"primary_expression": "Neutral", "confidence": 50.0}),
-                "hud_label": f"PERSON {tid} [{p_trk['confidence_pct']:.0f}%] | {p_trk['direction']}"
+                "hud_label": f"PERSON {tid} [{p_trk['confidence_pct']:.0f}%] | {p_trk['direction']}",
+                "hud_name": hud_name,
             }
-            if disp_name and disp_name != "UNKNOWN":
-                p_trk_enriched["hud_name"] = f"MATCH: {disp_name} ({face_info['match'].get('similarity', 0)*100:.0f}%)"
-            else:
-                p_trk_enriched["hud_name"] = "UNKNOWN PERSON"
 
             enriched_person_targets.append(p_trk_enriched)
 
@@ -272,10 +290,16 @@ class SurveillanceVisionPipeline:
 
             enriched_vehicle_targets.append({
                 "track_id": v_tid,
+                "target_id": v_tid,
+                "camera_id": self.camera_id,
                 "box": v_box,
+                "bbox": v_box,
                 "normalized_box": v_trk["normalized_box"],
                 "object_type": v_class,
+                "class_name": v_class.lower(),
+                "category": "vehicle",
                 "confidence": v_trk["confidence_pct"],
+                "confidence_pct": v_trk["confidence_pct"],
                 "plate": plate_info.get("formatted_plate", "N/A"),
                 "plate_valid": plate_info.get("is_valid", False),
                 "direction": v_trk["direction"],
@@ -283,24 +307,37 @@ class SurveillanceVisionPipeline:
                 "relative_speed": v_trk["relative_speed"],
                 "speed_label": v_trk["speed_label"],
                 "dwell_seconds": v_trk["dwell_seconds"],
+                "first_seen": v_trk["first_seen"],
+                "last_seen": v_trk["last_seen"],
                 "simulated": False,
                 "hud": f"[VEHICLE: {v_class} | {v_tid} | CONF: {v_trk['confidence_pct']:.0f}%]"
             })
 
-        # ── 5. Zone Analysis on All Active Targets ───────────────────────────
-        # Combine person targets and vehicle targets for restricted zone checking
-        combined_for_zone = enriched_person_targets + [
-            {
-                "target_id": v["track_id"],
-                "box": v["box"],
-                "normalized_box": v["normalized_box"],
-                "target_type": "vehicle"
-            }
-            for v in enriched_vehicle_targets
-        ]
+        # ── 5. Zone Analysis & Context-Based Risk Engine ─────────────────────
+        combined_for_zone = (
+            enriched_person_targets
+            + [
+                {
+                    "target_id": v["track_id"],
+                    "box": v["box"],
+                    "normalized_box": v["normalized_box"],
+                    "target_type": "vehicle"
+                }
+                for v in enriched_vehicle_targets
+            ]
+            + [
+                {
+                    "target_id": o["track_id"],
+                    "box": o["bbox"],
+                    "normalized_box": o["normalized_box"],
+                    "target_type": "object"
+                }
+                for o in object_tracks
+            ]
+        )
         analyzed_zone_targets = self.zone_analyzer.analyze(combined_for_zone, w, h)
 
-        # Map zone telemetry back to person and vehicle tracks
+        # Map zone telemetry and transparent rule-based risk back to all tracks
         zone_lookup = {t.get("target_id"): t for t in analyzed_zone_targets}
         for pt in enriched_person_targets:
             zinfo = zone_lookup.get(pt["target_id"], {})
@@ -309,11 +346,59 @@ class SurveillanceVisionPipeline:
             pt["loitering"] = zinfo.get("loitering", False)
             pt["dwell_seconds"] = zinfo.get("dwell_seconds", pt["dwell_seconds"])
 
+            if pt["in_restricted_zone"] and pt["loitering"]:
+                pt["risk_level"] = "CRITICAL"
+                pt["risk_reason"] = f"PERSON LOITERING IN RESTRICTED ZONE ({pt['dwell_seconds']:.0f}s)"
+            elif pt["in_restricted_zone"]:
+                pt["risk_level"] = "HIGH RISK"
+                pt["risk_reason"] = "PERSON CROSSED RESTRICTED BOUNDARY"
+            elif pt["loitering"]:
+                pt["risk_level"] = "SUSPICIOUS EVENT"
+                pt["risk_reason"] = f"EXTENDED DWELL TIME ({pt['dwell_seconds']:.0f}s)"
+            else:
+                pt["risk_level"] = "MONITORED"
+                pt["risk_reason"] = "PERSON TRACKED IN CORRIDOR"
+
         for vt in enriched_vehicle_targets:
             zinfo = zone_lookup.get(vt["track_id"], {})
             vt["in_restricted_zone"] = zinfo.get("in_restricted_zone", False)
             vt["zone_name"] = zinfo.get("zone_name", "SECTOR ALPHA")
             vt["loitering"] = zinfo.get("loitering", False)
+
+            if vt["in_restricted_zone"]:
+                vt["risk_level"] = "HIGH RISK"
+                vt["risk_reason"] = f"VEHICLE ({vt['object_type']}) IN RESTRICTED ZONE"
+            else:
+                vt["risk_level"] = "MONITORED"
+                vt["risk_reason"] = f"VEHICLE ({vt['object_type']}) TRACKED"
+
+        other_objects = []
+        for ot in object_tracks:
+            zinfo = zone_lookup.get(ot["track_id"], {})
+            in_zone = zinfo.get("in_restricted_zone", False)
+            dwell = zinfo.get("dwell_seconds", ot.get("dwell_seconds", 0.0))
+            cname = ot.get("class_name", "object").lower()
+
+            if cname in ("backpack", "suitcase", "handbag") and in_zone and dwell >= 15.0:
+                risk_level = "SUSPICIOUS EVENT"
+                risk_reason = f"BAG IN RESTRICTED ZONE ({dwell:.0f}s)"
+            elif cname in ("backpack", "suitcase", "handbag"):
+                risk_level = "MONITORED"
+                risk_reason = "CARRIED / TRACKED ITEM"
+            else:
+                risk_level = "NORMAL"
+                risk_reason = "NORMAL OBJECT"
+
+            other_objects.append({
+                **ot,
+                "target_id": ot["track_id"],
+                "class": cname,
+                "in_restricted_zone": in_zone,
+                "zone_name": zinfo.get("zone_name", "SECTOR ALPHA"),
+                "dwell_seconds": dwell,
+                "risk_level": risk_level,
+                "risk_reason": risk_reason,
+            })
 
         # ── 6. Observable CV Event Engine Processing ─────────────────────────
         # Combine person & vehicle tracks with full telemetry for event engine
@@ -373,6 +458,7 @@ class SurveillanceVisionPipeline:
             "targets": enriched_person_targets,
             "vehicles": enriched_vehicle_targets,
             "tracks": all_tracks,
+            "other_objects": other_objects,
             "total_faces": len(enriched_person_targets),
             "face_matches": active_face_matches,
             "anpr_events": active_anpr_results,
@@ -399,6 +485,9 @@ class SurveillanceVisionPipeline:
                 "loitering_count": ee_result.get("kpis", {}).get("loitering_count", 0),
                 "face_matches_count": len(active_face_matches),
                 "anpr_events_count": len(active_anpr_results),
+                "objects_count": len(other_objects),
+                "total_detections": len(self._last_yolo_detections),
+                "weapon_detection": "NOT CONFIGURED",
                 "latency_ms": latency_ms
             }
         }
@@ -419,6 +508,7 @@ class SurveillanceVisionPipeline:
             "targets": [],
             "vehicles": [],
             "tracks": [],
+            "other_objects": [],
             "total_faces": 0,
             "face_matches": [],
             "anpr_events": [],
@@ -438,6 +528,9 @@ class SurveillanceVisionPipeline:
                 "persons_count": 0,
                 "vehicles_count": 0,
                 "active_tracks": 0,
+                "objects_count": 0,
+                "total_detections": 0,
+                "weapon_detection": "NOT CONFIGURED",
                 "latency_ms": 0.0
             }
         }

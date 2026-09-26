@@ -498,6 +498,7 @@ async def websocket_video_stream(websocket: WebSocket):
                     "loitering_count": analysis["loitering_count"],
                     "sync": storage.status(),
                     "analytics_enabled": pipeline.analytics_enabled,
+                    "other_objects": analysis.get("other_objects", []),
                     "ai_stats": analysis["ai_stats"]
                 }
 

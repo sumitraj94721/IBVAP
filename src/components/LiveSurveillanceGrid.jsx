@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import ExpandedCameraView from './ExpandedCameraView';
 
 // ─── Vision Mode Definitions ─────────────────────────────────────────────────
 const VISION_MODES = [
@@ -173,6 +174,142 @@ function getEnvStatus(camId, mode) {
   }
 }
 
+// ─── AI Risk Engine ────────────────────────────────────────────────────────────
+function getRiskColor(riskLevel) {
+  switch ((riskLevel || '').toUpperCase()) {
+    case 'CRITICAL': return '#ef4444';
+    case 'HIGH RISK':
+    case 'HIGH': return '#f97316';
+    case 'SUSPICIOUS EVENT':
+    case 'SUSPICIOUS': return '#fbbf24';
+    case 'MONITORED': return '#38bdf8';
+    case 'NORMAL': return '#10b981';
+    default: return '#10b981';
+  }
+}
+
+function getRiskLabel(obj) {
+  if (!obj) return { level: 'NORMAL', reason: 'NORMAL OBJECT' };
+  const cls = (obj.class_name || obj.object_type || obj.class || 'OBJECT').toUpperCase();
+  if (obj.in_restricted_zone && obj.loitering) {
+    return { level: 'CRITICAL', reason: `${cls} LOITERING IN RESTRICTED ZONE (${(obj.dwell_seconds || 0).toFixed(0)}s)` };
+  }
+  if (obj.in_restricted_zone || obj.inRestrictedZone) {
+    return { level: 'HIGH RISK', reason: `${cls} CROSSED RESTRICTED BOUNDARY` };
+  }
+  if (obj.loitering) {
+    return { level: 'SUSPICIOUS EVENT', reason: `LOITERING DETECTED (${(obj.dwell_seconds || 0).toFixed(0)}s)` };
+  }
+  const backendLevel = (obj.risk_level || obj.riskLevel || '').toUpperCase();
+  const backendReason = obj.risk_reason || obj.riskReason;
+  if (backendLevel) {
+    return {
+      level: backendLevel,
+      reason: backendReason || (backendLevel === 'MONITORED' ? 'TRACKED TARGET' : 'NORMAL OBJECT'),
+    };
+  }
+  const cat = (obj.category || '').toLowerCase();
+  if (cat === 'person' || cat === 'vehicle') {
+    return { level: 'MONITORED', reason: `${cls} TRACKED` };
+  }
+  return { level: 'NORMAL', reason: 'NORMAL OBJECT' };
+}
+
+// ─── Object Inspection Panel ──────────────────────────────────────────────────
+function ObjectInspectionPanel({ obj, onClose }) {
+  if (!obj) return null;
+  const { level: riskLevel, reason: riskReason } = getRiskLabel(obj);
+  const riskColor = getRiskColor(riskLevel);
+  const isZone = obj.in_restricted_zone || obj.inRestrictedZone;
+  const firstSeen = obj.first_seen || obj.firstSeen || '--';
+  const lastSeen = obj.last_seen || obj.lastSeen || '--';
+  const trackId = obj.track_id || obj.target_id || obj.trackId || '--';
+  const conf = obj.confidence_pct ?? obj.detection_confidence ?? obj.confidence ?? 0;
+  const className = (obj.class_name || obj.object_type || obj.class || 'OBJECT').toUpperCase();
+  const camId = obj.camera_id || 'CAM-01';
+  const direction = obj.direction || 'STATIONARY';
+  const speed = obj.relative_speed != null ? `${Number(obj.relative_speed).toFixed(1)} px/s` : '0.0 px/s';
+  const faceStatus = obj.face_status || (obj.category === 'person' ? 'NO FACE VISIBLE' : 'N/A');
+
+  return (
+    <div style={{
+      position: 'fixed', bottom: 20, right: 20, zIndex: 9999,
+      background: '#040814', border: `1.5px solid ${riskColor}`,
+      borderRadius: 6, padding: '14px 18px', minWidth: 290, maxWidth: 350,
+      boxShadow: `0 4px 30px ${riskColor}33, 0 2px 10px rgba(0,0,0,0.8)`,
+      fontFamily: "'JetBrains Mono', monospace",
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <span style={{ color: riskColor, fontWeight: 700, fontSize: 11, letterSpacing: 1 }}>⊹ OBJECT INSPECTION</span>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 14 }}>✕</button>
+      </div>
+      {[
+        { label: 'OBJECT', value: className, color: riskColor, bold: true },
+        { label: 'TRACK ID', value: trackId, bold: true },
+        { label: 'CONFIDENCE', value: `${typeof conf === 'number' ? conf.toFixed(1) : conf}%` },
+        { label: 'CAMERA', value: camId },
+        { label: 'RISK STATUS', value: riskLevel, color: riskColor, bold: true },
+        { label: 'DIRECTION', value: direction },
+        { label: 'SPEED', value: speed },
+        { label: 'ZONE', value: isZone ? '⚠ RESTRICTED [SECTOR ALPHA]' : 'UNRESTRICTED / CLEAR', color: isZone ? '#ef4444' : '#10b981' },
+        ...(obj.category === 'person' ? [{ label: 'FACE STATUS', value: faceStatus }] : []),
+        ...(obj.plate && obj.plate !== 'N/A' ? [{ label: 'ANPR PLATE', value: obj.plate, color: '#f59e0b', bold: true }] : []),
+        { label: 'FIRST SEEN', value: firstSeen },
+        { label: 'LAST SEEN', value: lastSeen },
+      ].map(({ label, value, color, bold }) => (
+        <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: 10 }}>
+          <span style={{ color: '#64748b' }}>{label}</span>
+          <span style={{ color: color || '#e2e8f0', fontWeight: bold ? 700 : 400 }}>{value}</span>
+        </div>
+      ))}
+      <div style={{ marginTop: 8, padding: '6px 8px', background: `${riskColor}15`, border: `1px solid ${riskColor}40`, borderRadius: 3 }}>
+        <span style={{ fontSize: 9, color: '#64748b' }}>AI REASON: </span>
+        <span style={{ fontSize: 9, color: riskColor, fontWeight: 700 }}>{riskReason}</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── AI Issue Panel (on-screen security event) ────────────────────────────────
+function AiIssuePanel({ alert, onDismiss }) {
+  if (!alert) return null;
+  const sev = (alert.severity || 'HIGH').toUpperCase();
+  const sevColor = sev === 'CRITICAL' ? '#ef4444' : sev === 'HIGH' ? '#f97316' : sev === 'MEDIUM' ? '#fbbf24' : '#38bdf8';
+  const trackId = alert.targetId || alert.track_id || '--';
+  const objType = trackId.startsWith('V-') ? 'VEHICLE' : trackId.startsWith('O-') ? 'OBJECT' : 'PERSON';
+  return (
+    <div style={{
+      position: 'absolute', top: 44, left: '50%', transform: 'translateX(-50%)',
+      zIndex: 100, background: 'rgba(4,8,20,0.97)', border: `2px solid ${sevColor}`,
+      borderRadius: 6, padding: '10px 16px', minWidth: 300, maxWidth: 400,
+      boxShadow: `0 0 30px ${sevColor}55`, fontFamily: "'JetBrains Mono', monospace",
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+        <span style={{ color: sevColor, fontWeight: 700, fontSize: 11 }}>⚠ {sev} RISK EVENT</span>
+        <button onClick={onDismiss} style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 13 }}>✕</button>
+      </div>
+      <div style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 10, marginBottom: 6 }}>{alert.title}</div>
+      {[
+        ['Camera', alert.camera || 'CAM-01'],
+        ['Object', objType],
+        ['Track', trackId],
+        ['Confidence', alert.confidence ? `${alert.confidence}%` : '--'],
+        ['Zone', alert.sector || 'RESTRICTED'],
+      ].map(([k, v]) => (
+        <div key={k} style={{ display: 'flex', gap: 8, fontSize: 9, marginBottom: 2 }}>
+          <span style={{ color: '#64748b', minWidth: 75 }}>{k}:</span>
+          <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{v}</span>
+        </div>
+      ))}
+      {alert.description && (
+        <div style={{ marginTop: 6, padding: '4px 8px', background: `${sevColor}12`, border: `1px solid ${sevColor}40`, borderRadius: 3, fontSize: 9, color: sevColor }}>
+          Reason: {alert.description}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOpenPTZ, onTakeSnapshot }) {
   // Camera Ingestion & Device State
   const [videoDevices, setVideoDevices] = useState([]);
@@ -247,7 +384,13 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
     zoneIntrusions: 0,
     loiteringCount: 0,
     aiStats: {},
+    otherObjects: [],
   });
+
+  const [inspectedObject, setInspectedObject] = useState(null);
+  const [activeIssueAlert, setActiveIssueAlert] = useState(null);
+  const [expandedCam, setExpandedCam] = useState(null); // { id, url } | null
+  const activeIssueTimerRef = useRef(null);
 
   const videoRef = useRef(null);
   const overlayCanvasRef = useRef(null);
@@ -451,10 +594,20 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                 zoneIntrusions: data.zone_intrusions || 0,
                 loiteringCount: data.loitering_count || 0,
                 aiStats: data.ai_stats || {},
+                otherObjects: data.other_objects || [],
               };
               setAiTelemetry(updated);
               // Notify parent (App.jsx) with AI data for alerts/analytics
               if (onAiUpdate) onAiUpdate(updated);
+              // Show on-screen AI issue panel for high-priority alerts
+              const criticalAlerts = (updated.aiAlerts || []).filter(
+                a => a.severity === 'CRITICAL' || a.severity === 'HIGH'
+              );
+              if (criticalAlerts.length > 0) {
+                setActiveIssueAlert(criticalAlerts[0]);
+                if (activeIssueTimerRef.current) clearTimeout(activeIssueTimerRef.current);
+                activeIssueTimerRef.current = setTimeout(() => setActiveIssueAlert(null), 8000);
+              }
             }
           } catch (e) {
             console.warn('[IBVAP] WS telemetry parse error:', e);
@@ -753,22 +906,24 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
             ctx.stroke();
 
             // ── HUD info panel (right of bbox or below) ────────────────
-            const panelX = Math.min(x, cw - 160);
+            const panelX = Math.min(x, cw - 175);
             const panelY = Math.max(4, y - 4);
             const lines = [];
+            const { level: pRiskLevel } = getRiskLabel(target);
+            const pRiskColor = getRiskColor(pRiskLevel);
 
-            // Line 1: Target ID + type (e.g. PERSON P-001)
-            lines.push({ text: `PERSON ${targetId}`, color: themeColor, bold: true });
-            // Line 2: Detection confidence
-            lines.push({ text: `CONF: ${conf.toFixed(0)}%`, color: '#e2e8f0' });
-            // Line 3: Face match outcome (neutral terminology)
+            // Line 1: Target ID + type + confidence
+            lines.push({ text: `PERSON ${targetId} (${conf.toFixed(0)}%)`, color: themeColor, bold: true });
+            // Line 2: Risk Status
+            lines.push({ text: `RISK: ${pRiskLevel}`, color: pRiskColor, bold: true });
+            // Line 3: Face visibility / match outcome (honest terminology)
             const fm = target.face_match;
             if (fm && fm.face_match && fm.display_name && fm.display_name !== 'UNKNOWN') {
-              lines.push({ text: `MATCH: ${fm.display_name} (${(fm.similarity * 100).toFixed(0)}%)`, color: '#10b981', bold: true });
-            } else if (target.hud_name && target.hud_name.includes('MATCH')) {
-              lines.push({ text: target.hud_name, color: '#10b981', bold: true });
+              lines.push({ text: `KNOWN: ${fm.display_name} (${(fm.similarity * 100).toFixed(0)}%)`, color: '#10b981', bold: true });
+            } else if (target.has_face) {
+              lines.push({ text: `FACE DETECTED: UNKNOWN`, color: '#fbbf24' });
             } else {
-              lines.push({ text: `FACE: UNKNOWN [NO MATCH]`, color: '#94a3b8' });
+              lines.push({ text: `FACE: NOT VISIBLE`, color: '#94a3b8' });
             }
             // Line 4: Movement direction and estimated relative speed
             const speedVal = target.relative_speed ? `${target.relative_speed.toFixed(1)} px/s [EST]` : '0.0 px/s';
@@ -779,16 +934,11 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
             } else if (inZone) {
               lines.push({ text: `⚠ RESTRICTED ZONE [ALPHA]`, color: '#fbbf24', bold: true });
             }
-            // Line 6: Threat score
-            if (threatScore > 10) {
-              const tLabel = threatScore >= 75 ? 'CRITICAL' : threatScore >= 55 ? 'HIGH' : threatScore >= 30 ? 'MED' : 'LOW';
-              lines.push({ text: `THREAT: ${threatScore} [${tLabel}]`, color: threatScore >= 55 ? '#ef4444' : '#fbbf24' });
-            }
 
             // Draw panel background
             const lineH = 13;
             const panelH = lines.length * lineH + 8;
-            const panelW = 175;
+            const panelW = 180;
             ctx.fillStyle = 'rgba(4, 7, 18, 0.88)';
             ctx.fillRect(panelX, panelY - panelH, panelW, panelH);
             ctx.strokeStyle = themeColor;
@@ -833,11 +983,13 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
             const vconf = veh.confidence || 0;
             const vplate = veh.plate && veh.plate !== 'N/A' ? veh.plate : null;
             const vspeed = veh.relative_speed ? `${veh.relative_speed.toFixed(1)} px/s` : '0.0 px/s';
+            const { level: vRiskLevel } = getRiskLabel(veh);
+            const vRiskColor = getRiskColor(vRiskLevel);
 
-            ctx.fillStyle = 'rgba(0, 210, 255, 0.08)';
+            ctx.fillStyle = veh.in_restricted_zone ? 'rgba(239, 68, 68, 0.12)' : 'rgba(0, 210, 255, 0.08)';
             ctx.fillRect(x, y, w, h);
-            renderCornerReticles(ctx, x, y, w, h, '#00d2ff');
-            ctx.strokeStyle = '#00d2ff';
+            renderCornerReticles(ctx, x, y, w, h, veh.in_restricted_zone ? '#ef4444' : '#00d2ff');
+            ctx.strokeStyle = veh.in_restricted_zone ? '#ef4444' : '#00d2ff';
             ctx.lineWidth = 1.5;
             ctx.setLineDash([6, 3]);
             ctx.strokeRect(x, y, w, h);
@@ -845,8 +997,8 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
 
             // Vehicle HUD info card
             const vLines = [
-              { text: `${vname} ${vtrack}`, color: '#00d2ff', bold: true },
-              { text: `CONF: ${vconf.toFixed(0)}%`, color: '#e2e8f0' },
+              { text: `${vname} ${vtrack} (${vconf.toFixed(0)}%)`, color: '#00d2ff', bold: true },
+              { text: `RISK: ${vRiskLevel}`, color: vRiskColor, bold: true },
             ];
             if (vplate) {
               vLines.push({ text: `PLATE: ${vplate}`, color: '#f59e0b', bold: true });
@@ -860,13 +1012,13 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
 
             const vlH = 13;
             const vpH = vLines.length * vlH + 6;
-            const vpW = 150;
+            const vpW = 160;
             const vpX = Math.min(x, cw - vpW);
             const vpY = Math.max(2, y - 4);
 
             ctx.fillStyle = 'rgba(4, 7, 18, 0.90)';
             ctx.fillRect(vpX, vpY - vpH, vpW, vpH);
-            ctx.strokeStyle = '#00d2ff';
+            ctx.strokeStyle = veh.in_restricted_zone ? '#ef4444' : '#00d2ff';
             ctx.lineWidth = 1;
             ctx.strokeRect(vpX, vpY - vpH, vpW, vpH);
 
@@ -878,29 +1030,46 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
           });
         }
 
-        // ── OBJECT DETECTIONS (Generic) ──────────────────────────────────
-        if (aiTelemetry.objects && aiTelemetry.objects.length > 0) {
-          aiTelemetry.objects.forEach((obj) => {
+        // ── OBJECT DETECTIONS (All non-person/non-vehicle COCO classes) ───────
+        const otherObjects = aiTelemetry.otherObjects || aiTelemetry.other_objects || aiTelemetry.objects || [];
+        if (otherObjects.length > 0) {
+          otherObjects.forEach((obj) => {
             if (obj.category === 'person' || obj.category === 'vehicle') return;
             const [nx, ny, nw, nh] = obj.normalized_box || [0, 0, 0, 0];
             const x = nx * cw;
             const y = ny * ch;
             const w = nw * cw;
             const h = nh * ch;
-            const oname = (obj.class_name || 'OBJECT').toUpperCase();
-            const oconf = obj.confidence || 0;
+            if (w < 2 || h < 2) return;
+            const oname = (obj.class_name || obj.class || 'OBJECT').toUpperCase();
+            const otrack = obj.track_id || obj.target_id || '';
+            const oconf = obj.confidence_pct ?? obj.confidence ?? 0;
+            const { level: oRisk } = getRiskLabel(obj);
+            const riskClr = getRiskColor(oRisk);
 
-            ctx.strokeStyle = '#a78bfa';
-            ctx.lineWidth = 1.5;
+            ctx.fillStyle = 'rgba(16, 185, 129, 0.05)';
+            ctx.fillRect(x, y, w, h);
+            renderCornerReticles(ctx, x, y, w, h, riskClr);
+            ctx.strokeStyle = riskClr;
+            ctx.lineWidth = 1.2;
             ctx.setLineDash([3, 3]);
             ctx.strokeRect(x, y, w, h);
             ctx.setLineDash([]);
 
-            ctx.fillStyle = 'rgba(4, 7, 18, 0.85)';
-            ctx.fillRect(x, Math.max(2, y - 16), 130, 14);
-            ctx.fillStyle = '#a78bfa';
-            ctx.font = "9px 'JetBrains Mono', monospace";
-            ctx.fillText(`OBJ: ${oname}  ${oconf.toFixed(0)}%`, x + 3, Math.max(12, y - 5));
+            // Label box: OBJECT_NAME TRACK_ID CONF% | RISK
+            const confStr = `${typeof oconf === 'number' ? oconf.toFixed(0) : oconf}%`;
+            const labelText = `${oname} ${otrack} ${confStr} | ${oRisk}`;
+            const lw = Math.max(labelText.length * 5.8 + 10, 110);
+            const lx = Math.min(x, cw - lw - 2);
+            const ly = Math.max(2, y - 18);
+            ctx.fillStyle = 'rgba(4, 7, 18, 0.90)';
+            ctx.fillRect(lx, ly, lw, 16);
+            ctx.strokeStyle = riskClr;
+            ctx.lineWidth = 1;
+            ctx.strokeRect(lx, ly, lw, 16);
+            ctx.fillStyle = riskClr;
+            ctx.font = "bold 9px 'JetBrains Mono', monospace";
+            ctx.fillText(labelText, lx + 4, ly + 11);
           });
         }
 
@@ -933,7 +1102,7 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
         ctx.fillStyle = '#00f0ff';
         ctx.font = "8px 'JetBrains Mono', monospace";
         ctx.fillText(
-          `YOLOv8: ${personsN}P ${vehN}V | SFace-128D | LAT: ${aiTelemetry.latencyMs?.toFixed(0)||'?'}ms`,
+          `PERSONS:${personsN} VEH:${vehN} OBJ:${(aiTelemetry.otherObjects || aiTelemetry.other_objects || []).length} ALERTS:${(aiTelemetry.aiAlerts || []).filter(a => a.status === 'ACTIVE').length} | YOLO | LAT:${aiTelemetry.latencyMs?.toFixed(0)||'?'}ms`,
           10, ch - 12
         );
 
@@ -1410,6 +1579,21 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                   >
                     {maximizedCam === cam.id ? '⊠ RESTORE' : '⛶ MAX'}
                   </button>
+
+                  {/* Expanded AI Intelligence View */}
+                  <button
+                    className="btn-cam-action"
+                    onClick={() => setExpandedCam({ id: cam.id, url: cam.url })}
+                    title="Open expanded AI surveillance view with inspection panel"
+                    style={{
+                      background: 'rgba(0, 240, 255, 0.08)',
+                      borderColor: '#00f0ff',
+                      color: '#00f0ff',
+                      fontWeight: 700,
+                    }}
+                  >
+                    ⊹ AI VIEW
+                  </button>
                 </div>
               </div>
 
@@ -1464,8 +1648,33 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                         left: 0,
                         width: '100%',
                         height: '100%',
-                        pointerEvents: 'none',
+                        pointerEvents: isCameraActive ? 'auto' : 'none',
                         display: isCameraActive ? 'block' : 'none',
+                        cursor: 'crosshair',
+                      }}
+                      onClick={(e) => {
+                        const canvas = overlayCanvasRef.current;
+                        if (!canvas) return;
+                        const rect = canvas.getBoundingClientRect();
+                        const clickX = e.clientX - rect.left;
+                        const clickY = e.clientY - rect.top;
+                        const cw = canvas.width;
+                        const ch = canvas.height;
+                        // Check person targets, vehicles, and all other detected COCO objects
+                        const allObjects = [
+                          ...(aiTelemetry.targets || []).map(t => ({ ...t, _type: 'person' })),
+                          ...(aiTelemetry.vehicles || []).map(v => ({ ...v, _type: 'vehicle' })),
+                          ...(aiTelemetry.otherObjects || aiTelemetry.other_objects || []).map(o => ({ ...o, _type: 'object' })),
+                        ];
+                        for (const obj of allObjects) {
+                          const [nx, ny, nw, nh] = obj.normalized_box || [0, 0, 0, 0];
+                          const bx = nx * cw, by = ny * ch, bw = nw * cw, bh = nh * ch;
+                          if (clickX >= bx && clickX <= bx + bw && clickY >= by && clickY <= by + bh) {
+                            setInspectedObject(obj);
+                            return;
+                          }
+                        }
+                        setInspectedObject(null);
                       }}
                     />
 
@@ -1477,6 +1686,8 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                         display: isCameraActive ? 'none' : 'block',
                       }}
                     />
+                    {/* On-screen AI Issue Alert */}
+                    <AiIssuePanel alert={activeIssueAlert} onDismiss={() => setActiveIssueAlert(null)} />
                   </div>
                 ) : cam.id === 'CAM-02' ? (
                   <div style={{ position: 'relative', width: '100%', height: '100%', background: '#050b12' }}>
@@ -1524,7 +1735,7 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                   {isCam1 ? (
                     <>
                       <span className="fps-tag">
-                        {aiTelemetry.latencyMs > 0 ? `${aiTelemetry.latencyMs}ms LAT` : '30 FPS'}
+                        {aiTelemetry.latencyMs > 0 ? `${Math.round(1000 / Math.max(25, aiTelemetry.latencyMs))} FPS (${aiTelemetry.latencyMs.toFixed(0)}ms)` : 'LIVE'}
                       </span>
                       <span
                         className="status-tag"
@@ -1536,7 +1747,9 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                         {isWsConnected ? '● AI STREAM' : '○ AI STANDBY'}
                       </span>
                       <span style={{ marginLeft: 8, fontSize: 9, color: 'var(--text-dim)' }}>
-                        AI: <strong style={{ color: 'var(--status-green)' }}>ONLINE</strong>
+                        AI: <strong style={{ color: isWsConnected ? 'var(--status-green)' : 'var(--warning-amber)' }}>
+                          {isWsConnected ? (aiTelemetry.aiStats?.yolo_status || 'ACTIVE') : 'STANDBY'}
+                        </strong>
                       </span>
                     </>
                   ) : cam.id === 'CAM-02' ? (
@@ -1552,11 +1765,8 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                   ) : (
                     <>
                       <span className="fps-tag">{cam.fps} FPS</span>
-                      <span className="status-tag" style={{ marginLeft: 8, color: 'var(--status-green)' }}>
-                        ● STREAM ACTIVE
-                      </span>
-                      <span style={{ marginLeft: 8, fontSize: 9, color: 'var(--text-dim)' }}>
-                        AI: <strong style={{ color: 'var(--status-green)' }}>ONLINE</strong>
+                      <span className="status-tag" style={{ marginLeft: 8, color: '#fbbf24' }}>
+                        ◈ DEMO / SIMULATION
                       </span>
                     </>
                   )}
@@ -1566,6 +1776,24 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
           );
         })}
       </div>
+
+      {/* Expanded AI Camera View (fullscreen modal) */}
+      {expandedCam && (
+        <ExpandedCameraView
+          cameraId={expandedCam.id}
+          cameraUrl={expandedCam.url || (expandedCam.id === 'CAM-01' ? '/video_feed/cam1' : `/video_feed/${expandedCam.id.toLowerCase().replace('-', '')}`)}
+          videoStream={expandedCam.id === 'CAM-01' ? streamRef.current : null}
+          isCameraActive={expandedCam.id === 'CAM-01' ? isCameraActive : false}
+          aiTelemetry={aiTelemetry}
+          onClose={() => setExpandedCam(null)}
+        />
+      )}
+
+      {/* Object Inspection Panel (fixed bottom-right) */}
+      <ObjectInspectionPanel
+        obj={inspectedObject}
+        onClose={() => setInspectedObject(null)}
+      />
     </div>
   );
 }

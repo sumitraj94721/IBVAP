@@ -215,6 +215,7 @@ class MultiObjectTracker:
 
         self.next_person_id = 1
         self.next_vehicle_id = 1
+        self.next_object_id = 1
 
         self.tracks: Dict[str, TrackedTarget] = {}
 
@@ -223,9 +224,13 @@ class MultiObjectTracker:
             tid = f"P-{self.next_person_id:03d}"
             self.next_person_id += 1
             return tid
-        else:
+        elif category == "vehicle":
             tid = f"V-{self.next_vehicle_id:03d}"
             self.next_vehicle_id += 1
+            return tid
+        else:
+            tid = f"O-{self.next_object_id:03d}"
+            self.next_object_id += 1
             return tid
 
     def update(
@@ -249,14 +254,16 @@ class MultiObjectTracker:
                 elif cname in ["car", "truck", "bus", "motorcycle", "bicycle"]:
                     d["category"] = "vehicle"
                 else:
-                    d["category"] = "other"
+                    d["category"] = "object"
 
-        # Separate detections by category to prevent person-vehicle ID cross-over
+        # Separate detections by category to prevent ID cross-over
         person_dets = [d for d in detections if d.get("category") == "person"]
         vehicle_dets = [d for d in detections if d.get("category") == "vehicle"]
+        object_dets = [d for d in detections if d.get("category") not in ("person", "vehicle")]
 
         self._update_category("person", person_dets, w, h, camera_id)
         self._update_category("vehicle", vehicle_dets, w, h, camera_id)
+        self._update_category("object", object_dets, w, h, camera_id)
 
         # Remove dead tracks
         dead_ids = [
@@ -314,7 +321,12 @@ class MultiObjectTracker:
 
         for i, tid in enumerate(existing_ids):
             trk_box = self.tracks[tid].bbox
+            trk_cls = self.tracks[tid].class_name
             for j, det in enumerate(category_detections):
+                det_cls = det.get("class_name") or det.get("class") or category
+                if category == "object" and trk_cls != det_cls:
+                    cost_matrix[i, j] = 10.0
+                    continue
                 iou = compute_iou(trk_box, det["bbox"])
                 if iou > 0:
                     cost_matrix[i, j] = 1.0 - iou
@@ -373,3 +385,4 @@ class MultiObjectTracker:
         self.tracks.clear()
         self.next_person_id = 1
         self.next_vehicle_id = 1
+        self.next_object_id = 1

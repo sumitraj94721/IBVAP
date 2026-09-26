@@ -1,28 +1,35 @@
 import React from 'react';
 
 export default function KpiRibbon({ kpiData }) {
-  const fps = kpiData.latencyMs ? Math.min(30, Math.max(12, Math.round(1000 / Math.max(25, kpiData.latencyMs)))) : 28;
+  const fps = kpiData.latencyMs ? Math.min(30, Math.max(12, Math.round(1000 / Math.max(25, kpiData.latencyMs)))) : 0;
 
   return (
-    <section className="kpi-ribbon" style={{ gridTemplateColumns: 'repeat(8, 1fr)' }}>
+    <section className="kpi-ribbon" style={{ gridTemplateColumns: 'repeat(9, 1fr)' }}>
       <div className="kpi-card">
-        <span className="kpi-label">TOTAL PERSONS</span>
+        <span className="kpi-label">PERSONS</span>
         <span className="kpi-value" style={{ color: 'var(--cyan-glow)' }}>
-          {String(kpiData.persons).padStart(2, '0')}
+          {String(kpiData.persons ?? 0).padStart(2, '0')}
         </span>
       </div>
 
       <div className="kpi-card">
-        <span className="kpi-label">ACTIVE VEHICLES</span>
+        <span className="kpi-label">VEHICLES</span>
         <span className="kpi-value" style={{ color: '#00d2ff' }}>
-          {String(kpiData.vehicles).padStart(2, '0')}
+          {String(kpiData.vehicles ?? 0).padStart(2, '0')}
+        </span>
+      </div>
+
+      <div className="kpi-card">
+        <span className="kpi-label">OBJECTS</span>
+        <span className="kpi-value" style={{ color: '#10b981' }}>
+          {String(kpiData.objects ?? 0).padStart(2, '0')}
         </span>
       </div>
 
       <div className="kpi-card">
         <span className="kpi-label">ACTIVE TRACKS</span>
         <span className="kpi-value" style={{ color: '#a78bfa' }}>
-          {String(kpiData.activeTracks).padStart(2, '0')}
+          {String(kpiData.activeTracks ?? 0).padStart(2, '0')}
         </span>
       </div>
 
