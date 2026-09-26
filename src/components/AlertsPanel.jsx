@@ -144,6 +144,44 @@ export default function AlertsPanel({ alerts, onAcknowledgeAlert, onEscalateAler
                       <div><strong style={{ color: '#00f0ff' }}>OBJECT:</strong> {exp.object}</div>
                       <div style={{ gridColumn: '1 / -1' }}><strong style={{ color: '#fbbf24' }}>WHY:</strong> {exp.why}</div>
                       <div><strong style={{ color: '#10b981' }}>CONFIDENCE:</strong> {exp.confidence}%</div>
+                      {alert.scenario_label && (
+                        <div><strong style={{ color: '#fbbf24' }}>SCENARIO:</strong> {alert.scenario_label}</div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Evidence Snapshot & Checklist (Sections 8 & 14) */}
+                  {(alert.snapshot_url || alert.evidence_checklist) && (
+                    <div
+                      style={{
+                        marginTop: 6,
+                        padding: '6px 9px',
+                        background: 'rgba(9, 15, 28, 0.9)',
+                        border: '1px solid rgba(251, 191, 36, 0.3)',
+                        borderRadius: 4,
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: 10,
+                        alignItems: 'center',
+                        fontSize: 9,
+                      }}
+                    >
+                      {alert.snapshot_url && (
+                        <img
+                          src={alert.snapshot_url}
+                          alt="Intruder Evidence"
+                          style={{ width: 88, height: 52, objectFit: 'cover', borderRadius: 3, border: '1px solid #ef4444' }}
+                        />
+                      )}
+                      {alert.evidence_checklist && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 10px', flex: 1 }}>
+                          {alert.evidence_checklist.slice(0, 6).map((c, i) => (
+                            <span key={i} style={{ color: c.verified ? '#10b981' : '#94a3b8' }}>
+                              {c.verified ? '✔' : '✖'} {c.item}: <strong>{c.detail}</strong>
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

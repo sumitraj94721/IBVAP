@@ -62,9 +62,13 @@ app.add_middleware(
 # Include RBAC Authentication Router
 app.include_router(auth_router)
 
-# Mount static snapshot directory
+# Mount static snapshot and demo directories
 if os.path.exists(SNAPSHOT_DIR):
     app.mount("/static/snapshots", StaticFiles(directory=SNAPSHOT_DIR), name="snapshots")
+
+DEMO_MEDIA_DIR = os.path.join(PROJECT_ROOT, "public", "demo")
+if os.path.exists(DEMO_MEDIA_DIR):
+    app.mount("/demo", StaticFiles(directory=DEMO_MEDIA_DIR), name="demo_media")
 
 # Global Vision Pipeline, Multi-Camera Fusion Engine & Camera Managers
 pipeline = SurveillanceVisionPipeline(camera_id="CAM-01")
@@ -148,6 +152,8 @@ async def get_system_status():
             "detector_status": yolo_stat.get("status", "ONLINE"),
             "custom_object_detection": yolo_stat.get("custom_object_detection", "NOT CONFIGURED"),
             "weapon_detection": yolo_stat.get("weapon_detection", "NOT CONFIGURED"),
+            "structure_detection": yolo_stat.get("structure_detection", "NOT CONFIGURED"),
+            "supported_structure_classes": yolo_stat.get("supported_structure_classes", []),
             "face_detector": "YuNet ONNX DNN",
             "face_recognizer": "SFace 128D ONNX Feature Extractor",
             "face_watchlist_count": len(pipeline.face_matcher.list_identities()),
@@ -345,11 +351,17 @@ async def delete_known_suspect(suspect_id: int):
 # -----------------------------------------------------------------
 
 @app.get("/api/zone/config")
-async def get_zone_config():
+async def get_zone_config(camera_id: str = "CAM-01"):
     from backend.ai.zone_analyzer import DEFAULT_ZONE
     try:
-        zone = pipeline.zone_analyzer.zones[0] if pipeline.zone_analyzer.zones else DEFAULT_ZONE
-        return {"zone": zone, "loitering_threshold": pipeline.zone_analyzer.loitering_threshold}
+        zone = pipeline.zone_analyzer.get_zone(camera_id)
+        return {
+            "camera_id": camera_id,
+            "zone": zone,
+            "camera_zones": pipeline.zone_analyzer.camera_zones,
+            "bunker_zones": fusion_engine.bunker_camera_zones,
+            "loitering_threshold": pipeline.zone_analyzer.loitering_threshold,
+        }
     except Exception:
         return {"zone": DEFAULT_ZONE, "loitering_threshold": 20}
 
@@ -357,23 +369,69 @@ async def get_zone_config():
 @app.post("/api/zone/config")
 async def set_zone_config(payload: Dict[str, Any]):
     try:
+        cam_id = payload.get("camera_id", "CAM-01")
         if "zone" in payload:
-            pipeline.zone_analyzer.set_zone(payload["zone"])
+            pipeline.zone_analyzer.set_zone(payload["zone"], camera_id=cam_id)
+            if cam_id in ("CAM-03", "CAM-04"):
+                z = payload["zone"]
+                fusion_engine.update_bunker_zone(cam_id, {
+                    "zone_name": z.get("name"),
+                    "zone_type": z.get("zone_type"),
+                    "asset_name": z.get("asset_name"),
+                    "nx": z.get("nx"),
+                    "ny": z.get("ny"),
+                    "nw": z.get("nw"),
+                    "nh": z.get("nh"),
+                })
         if "loitering_threshold" in payload:
             pipeline.zone_analyzer.set_loitering_threshold(float(payload["loitering_threshold"]))
-        return {"status": "updated", "zone": pipeline.zone_analyzer.zones}
+        return {
+            "status": "updated",
+            "camera_id": cam_id,
+            "zone": pipeline.zone_analyzer.get_zone(cam_id),
+            "camera_zones": pipeline.zone_analyzer.camera_zones,
+            "bunker_zones": fusion_engine.bunker_camera_zones,
+        }
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 
 
 # -----------------------------------------------------------------
-# 6. Multi-Camera Intelligence & Incident Fusion APIs
+# 6. Multi-Camera Intelligence, Bunker Demo & Protected Assets APIs
 # -----------------------------------------------------------------
 
 @app.get("/api/incidents/fusion")
 async def get_incident_fusion_state():
-    """Returns current IBVAP multi-camera correlation state, timeline, snapshots, and 'What is happening now'."""
+    """Returns current IBVAP multi-camera correlation state, bunker zones, protected assets, timeline, snapshots, and 'What is happening now'."""
     return fusion_engine.get_intelligence_summary()
+
+
+@app.get("/api/demo/media")
+async def get_demo_media_catalog():
+    """Returns configured demo/simulation media sources for CAM-03 and CAM-04."""
+    return {
+        "demo_media": fusion_engine.get_demo_media_catalog(),
+        "bunker_zones": fusion_engine.bunker_camera_zones,
+        "protected_assets": fusion_engine.protected_assets,
+        "structure_model": "NOT CONFIGURED",
+    }
+
+
+@app.post("/api/incidents/bunker-demo")
+async def trigger_bunker_intruder_demo_endpoint():
+    """
+    Runs the real YOLOv8 + Tracker + Bunker Zone Intruder Demo scenario on CAM-03 and CAM-04
+    using the demo video/frames in public/demo/incidents/, saving BEFORE / EVENT / AFTER replay
+    snapshots and raising a PROTECTED-AREA INTRUSION alert labeled [DEMO / SIMULATION].
+    """
+    demo_result = fusion_engine.run_bunker_intruder_demo(pipeline=pipeline)
+    if demo_result.get("alert"):
+        await broadcast_alert_to_clients({
+            "type": "alert_event",
+            "event": demo_result["alert"],
+            "timestamp": time.strftime("%H:%M:%S")
+        })
+    return demo_result
 
 
 @app.post("/api/incidents/demo-fusion")
@@ -393,6 +451,17 @@ async def trigger_sih_demo_fusion_endpoint():
     return demo_result
 
 
+@app.post("/api/incidents/acknowledge")
+async def acknowledge_incident_endpoint(payload: Optional[Dict[str, Any]] = None):
+    """Acknowledges an active incident and clears priority camera override."""
+    inc_id = (payload or {}).get("incident_id")
+    ack_res = fusion_engine.acknowledge_incident(inc_id)
+    summary = fusion_engine.get_intelligence_summary()
+    summary["acknowledge_result"] = ack_res
+    summary["acknowledged_incident"] = ack_res.get("acknowledged_incident")
+    return summary
+
+
 @app.post("/api/incidents/clear-priority")
 async def clear_priority_camera_endpoint():
     """Clears automatic primary incident camera prioritization override."""
@@ -406,6 +475,34 @@ async def get_incident_snapshots():
     return {"snapshots": fusion_engine.snapshots}
 
 
+@app.get("/api/assets")
+async def get_protected_assets():
+    """Returns Protected Asset monitoring statuses (OUTPOST ALPHA, CHECKPOINT DELTA, FORWARD GATE ALPHA)."""
+    fusion_engine._sync_protected_assets()
+    return {
+        "protected_assets": fusion_engine.protected_assets,
+        "bunker_zones": fusion_engine.bunker_camera_zones,
+        "supported_asset_types": fusion_engine.get_intelligence_summary().get("supported_asset_types", []),
+        "structure_model": "NOT CONFIGURED",
+    }
+
+
+@app.post("/api/assets")
+async def configure_protected_asset(payload: Dict[str, Any]):
+    """Updates or adds a Protected Asset and optionally updates its camera bunker zone."""
+    assets = fusion_engine.update_protected_asset(payload)
+    cam_id = payload.get("camera_id")
+    if cam_id in ("CAM-01", "CAM-02", "CAM-03", "CAM-04") and "zone" in payload:
+        pipeline.zone_analyzer.set_zone(payload["zone"], camera_id=cam_id)
+        if cam_id in ("CAM-03", "CAM-04"):
+            fusion_engine.update_bunker_zone(cam_id, payload["zone"])
+    return {
+        "status": "updated",
+        "protected_assets": assets,
+        "bunker_zones": fusion_engine.bunker_camera_zones,
+    }
+
+
 # -----------------------------------------------------------------
 # 6B. REST Analyze Frame Fallback
 # -----------------------------------------------------------------
@@ -414,7 +511,9 @@ async def get_incident_snapshots():
 async def analyze_uploaded_frame(
     file: UploadFile = File(...),
     confidence: float = Form(0.40),
-    engine: str = Form("yunet")
+    engine: str = Form("yunet"),
+    camera_id: str = Form("CAM-01"),
+    is_demo: bool = Form(False),
 ):
     contents = await file.read()
     nparr = np.frombuffer(contents, np.uint8)
@@ -424,11 +523,18 @@ async def analyze_uploaded_frame(
         return JSONResponse({"error": "Invalid image format"}, status_code=400)
 
     t0 = time.time()
-    result = pipeline.process_frame(frame, confidence_threshold=confidence, engine=engine)
+    result = pipeline.process_frame(
+        frame,
+        confidence_threshold=confidence,
+        engine=engine,
+        camera_id=camera_id,
+        is_demo=is_demo,
+        scenario_label="SCENARIO: BORDER INTRUSION — SIMULATION" if is_demo else None,
+    )
     dt = (time.time() - t0) * 1000
     result["latency_ms"] = round(dt, 2)
     result["sync"] = storage.status()
-    result["fusion"] = fusion_engine.update_from_pipeline("CAM-01", result, frame_bgr=frame, latency_ms=dt)
+    result["fusion"] = fusion_engine.update_from_pipeline(camera_id, result, frame_bgr=frame, latency_ms=dt)
     return result
 
 
@@ -440,8 +546,9 @@ async def analyze_uploaded_frame(
 async def websocket_video_stream(websocket: WebSocket):
     """
     Bidirectional WebSocket pipeline for camera video ingestion & telemetry.
-    Receives JPEG base64 frames from React dashboard, executes unified multi-object
-    AI pipeline, and returns normalized bounding boxes, tracks, face matches, and alerts.
+    Receives JPEG base64 frames from React dashboard (live or demo video/image),
+    executes unified multi-object AI pipeline, and returns normalized bounding boxes,
+    tracks, protected zone state, face matches, and alerts.
     """
     await websocket.accept()
     logger.info("Command Center CCTV WebSocket connected.")
@@ -472,6 +579,14 @@ async def websocket_video_stream(websocket: WebSocket):
                 image_data = data.get("image", "")
                 conf_thresh = float(data.get("confidence_threshold", 0.40))
                 cam_id = data.get("camera_id", "CAM-01")
+                is_demo = bool(data.get("is_demo", cam_id in ("CAM-03", "CAM-04")))
+                scenario_label = data.get(
+                    "scenario_label",
+                    "SCENARIO: BORDER INTRUSION — SIMULATION" if is_demo else None
+                )
+                source_mode = data.get("source_mode")
+                if cam_id in ("CAM-03", "CAM-04") and source_mode:
+                    fusion_engine.update_bunker_zone(cam_id, {"source_mode": source_mode, "is_demo": is_demo})
 
                 if not image_data:
                     continue
@@ -486,10 +601,13 @@ async def websocket_video_stream(websocket: WebSocket):
                 if frame is None:
                     continue
 
-                # Run unified surveillance pipeline
+                # Run unified surveillance pipeline for the specific camera_id
                 analysis = pipeline.process_frame(
                     frame,
-                    confidence_threshold=conf_thresh
+                    confidence_threshold=conf_thresh,
+                    camera_id=cam_id,
+                    is_demo=is_demo,
+                    scenario_label=scenario_label,
                 )
 
                 latency_ms = round((time.time() - t_recv) * 1000, 1)
@@ -534,12 +652,17 @@ async def websocket_video_stream(websocket: WebSocket):
                 # Return full tactical telemetry response
                 response_payload = {
                     "type": "telemetry",
+                    "camera_id": cam_id,
+                    "is_demo": is_demo,
+                    "scenario_label": scenario_label,
                     "timestamp": time.time(),
                     "latency_ms": latency_ms,
                     "targets": analysis["targets"],
                     "vehicles": analysis["vehicles"],
                     "tracks": analysis["tracks"],
                     "frame_size": analysis["frame_size"],
+                    "protected_zone": analysis.get("protected_zone"),
+                    "structure_detection": analysis.get("structure_detection", "NOT CONFIGURED"),
                     "alerts": analysis["alerts"],
                     "ai_alerts": analysis["ai_alerts"],
                     "ai_events": analysis["ai_events"],
@@ -626,6 +749,13 @@ async def websocket_alerts_endpoint(websocket: WebSocket):
                 })
             elif data.get("action") == "trigger_sih_demo_fusion":
                 demo_res = fusion_engine.trigger_sih_demo_fusion()
+                if demo_res.get("alert"):
+                    await broadcast_alert_to_clients({
+                        "type": "alert_event",
+                        "event": demo_res["alert"]
+                    })
+            elif data.get("action") == "trigger_bunker_demo":
+                demo_res = fusion_engine.run_bunker_intruder_demo(pipeline=pipeline)
                 if demo_res.get("alert"):
                     await broadcast_alert_to_clients({
                         "type": "alert_event",

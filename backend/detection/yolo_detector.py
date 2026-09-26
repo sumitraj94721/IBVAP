@@ -132,6 +132,16 @@ DEFAULT_CONFIDENCE = float(os.getenv("YOLO_CONFIDENCE", "0.40"))
 DEFAULT_IMGSZ = int(os.getenv("YOLO_IMGSZ", "640"))
 WEAPON_MODEL_PATH = os.getenv("WEAPON_MODEL_PATH", "").strip()
 CUSTOM_OBJECT_MODEL_PATH = os.getenv("CUSTOM_OBJECT_MODEL_PATH", "").strip()
+STRUCTURE_MODEL_PATH = os.getenv("STRUCTURE_MODEL_PATH", "").strip()
+
+SUPPORTED_STRUCTURE_CLASSES = [
+    "BUNKER",
+    "BORDER OUTPOST",
+    "WATCHTOWER",
+    "CHECKPOINT",
+    "RESTRICTED BUILDING",
+    "PROTECTED STRUCTURE",
+]
 
 
 class YoloDetector:
@@ -147,6 +157,9 @@ class YoloDetector:
     CUSTOM_OBJECT_MODEL_PATH; never fabricates unsupported classes when not loaded.
     Weapon detection: Configurable via WEAPON_MODEL_PATH; defaults to
     NOT CONFIGURED when no dedicated weapon model is present.
+    Structure / Bunker detection: Configurable via STRUCTURE_MODEL_PATH for
+    BUNKER, BORDER OUTPOST, WATCHTOWER, CHECKPOINT, RESTRICTED BUILDING,
+    PROTECTED STRUCTURE; defaults to NOT CONFIGURED when not loaded.
     """
 
     def __init__(
@@ -158,6 +171,7 @@ class YoloDetector:
         conf_thresh: Optional[float] = None,
         weapon_model_path: Optional[str] = None,
         custom_object_model_path: Optional[str] = None,
+        structure_model_path: Optional[str] = None,
         **kwargs
     ):
         self.camera_id = camera_id
@@ -171,6 +185,9 @@ class YoloDetector:
         self.custom_object_model_path = (custom_object_model_path or CUSTOM_OBJECT_MODEL_PATH).strip()
         self.custom_object_model = None
         self.custom_object_ready = False
+        self.structure_model_path = (structure_model_path or STRUCTURE_MODEL_PATH).strip()
+        self.structure_model = None
+        self.structure_ready = False
         self.device = "cpu"
         self.model = None
 
@@ -188,7 +205,7 @@ class YoloDetector:
             logger.info("[*] Running YOLO detector in CPU MODE.")
 
     def _load_optional_models(self):
-        """Loads optional specialized weapon or custom everyday object YOLO models if configured."""
+        """Loads optional specialized weapon, structure, or custom everyday object YOLO models if configured."""
         if not _ULTRALYTICS_AVAILABLE:
             return
         if self.weapon_model_path and os.path.exists(self.weapon_model_path):
@@ -208,6 +225,15 @@ class YoloDetector:
             except Exception as e:
                 logger.warning(f"[!] Could not load custom object model '{self.custom_object_model_path}': {e}")
                 self.custom_object_ready = False
+
+        if self.structure_model_path and os.path.exists(self.structure_model_path):
+            try:
+                self.structure_model = YOLO(self.structure_model_path)
+                self.structure_ready = True
+                logger.info(f"[+] Structure/Bunker detection model loaded: {self.structure_model_path}")
+            except Exception as e:
+                logger.warning(f"[!] Could not load structure model '{self.structure_model_path}': {e}")
+                self.structure_ready = False
 
     def _load_model(self):
         """Loads Ultralytics YOLO model from disk or cache."""
@@ -412,6 +438,39 @@ class YoloDetector:
                 except Exception as e:
                     logger.debug(f"Weapon model inference error: {e}")
 
+            # Optional dedicated structure/bunker model if configured
+            if self.structure_ready and self.structure_model is not None:
+                try:
+                    s_res = self.structure_model.predict(
+                        source=frame_bgr, conf=max(0.50, conf_thresh), imgsz=self.imgsz, device=self.device, verbose=False
+                    )
+                    if s_res and len(s_res) > 0 and s_res[0].boxes is not None:
+                        for box in s_res[0].boxes:
+                            cls_id = int(box.cls[0].item())
+                            cname = str(self.structure_model.names.get(cls_id, f"structure_{cls_id}")).lower()
+                            conf = float(box.conf[0].item())
+                            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                            x1, y1 = max(0, min(int(x1), w - 1)), max(0, min(int(y1), h - 1))
+                            x2, y2 = max(0, min(int(x2), w)), max(0, min(int(y2), h))
+                            bw, bh = x2 - x1, y2 - y1
+                            if bw >= 8 and bh >= 8:
+                                detections.append({
+                                    "class": cname,
+                                    "class_name": cname,
+                                    "category": "protected_structure",
+                                    "confidence": round(conf, 3),
+                                    "confidence_pct": round(conf * 100, 1),
+                                    "bbox": [x1, y1, bw, bh],
+                                    "normalized_box": [round(x1 / w, 4), round(y1 / h, 4), round(bw / w, 4), round(bh / h, 4)],
+                                    "center": (int(x1 + bw / 2.0), int(y1 + bh / 2.0)),
+                                    "camera_id": cam_id,
+                                    "timestamp": timestamp,
+                                    "risk_level": "MONITORED",
+                                    "cls_id": 3000 + cls_id,
+                                })
+                except Exception as e:
+                    logger.debug(f"Structure model inference error: {e}")
+
             return detections
 
         except Exception as e:
@@ -432,4 +491,7 @@ class YoloDetector:
             "weapon_model": self.weapon_model_path if self.weapon_ready else None,
             "custom_object_detection": "ACTIVE" if self.custom_object_ready else "NOT CONFIGURED",
             "custom_object_model": self.custom_object_model_path if self.custom_object_ready else None,
+            "structure_detection": "ACTIVE" if self.structure_ready else "NOT CONFIGURED",
+            "structure_model": self.structure_model_path if self.structure_ready else None,
+            "supported_structure_classes": SUPPORTED_STRUCTURE_CLASSES,
         }

@@ -14,19 +14,23 @@ export const DigitalBorderTwin = ({
   const [geofenceOn, setGeofenceOn] = useState(true);
   const [notification, setNotification] = useState(null);
   const [realEvents, setRealEvents] = useState([]);
+  const [fusionSummary, setFusionSummary] = useState(null);
 
-  // Fetch real security events from backend (/api/events)
+  // Fetch real security events & multi-camera bunker incident fusion from backend
   useEffect(() => {
     let isMounted = true;
     const fetchSecurityEvents = async () => {
       try {
-        const res = await fetch('/api/events?limit=30');
-        if (res.ok) {
-          const data = await res.json();
+        const [evRes, fusRes] = await Promise.all([
+          fetch('/api/events?limit=30'),
+          fetch('/api/incidents/fusion'),
+        ]);
+        if (evRes.ok) {
+          const data = await evRes.json();
           if (isMounted && data.events && data.events.length > 0) {
             const mapped = data.events.map((e) => ({
               time: e.timestamp ? e.timestamp.slice(11, 19) : new Date().toLocaleTimeString(),
-              cam: e.camera_id || 'CAM-02',
+              cam: e.camera_id || 'CAM-03',
               type: e.severity === 'CRITICAL' ? 'CRIT' : 'INFO',
               badgeClass: e.severity === 'CRITICAL' ? 'bg-error-container text-on-error-container' : 'bg-surface-container-highest text-primary',
               title: e.title || 'SECURITY EVENT',
@@ -36,13 +40,17 @@ export const DigitalBorderTwin = ({
             setRealEvents(mapped);
           }
         }
+        if (fusRes.ok) {
+          const fusData = await fusRes.json();
+          if (isMounted) setFusionSummary(fusData);
+        }
       } catch (err) {
         // Backend offline or error
       }
     };
 
     fetchSecurityEvents();
-    const interval = setInterval(fetchSecurityEvents, 6000);
+    const interval = setInterval(fetchSecurityEvents, 5000);
     return () => {
       isMounted = false;
       clearInterval(interval);
@@ -55,6 +63,13 @@ export const DigitalBorderTwin = ({
   };
 
   const displayStream = realEvents.length > 0 ? realEvents : SOC_TELEMETRY_STREAM;
+  const activeFusion = fusionSummary || aiTelemetry?.fusion || null;
+  const activeInc = activeFusion?.fused_incidents?.[0] || null;
+  const protectedAssets = activeFusion?.protected_assets || [
+    { name: 'OUTPOST ALPHA', camera_id: 'CAM-03', zone_name: 'BUNKER / OUTPOST ALPHA', status: 'ALERT' },
+    { name: 'CHECKPOINT DELTA', camera_id: 'CAM-04', zone_name: 'RESTRICTED APPROACH / INTRUSION AREA', status: 'WATCH' },
+    { name: 'FORWARD GATE ALPHA', camera_id: 'CAM-01', zone_name: 'BORDER ZONE A', status: 'SECURE' },
+  ];
 
   const handleExportCSV = () => {
     const csvContent =
@@ -100,15 +115,12 @@ export const DigitalBorderTwin = ({
               DIGITAL BORDER TWIN
             </span>
           </div>
-          <div className="flex items-center gap-1 font-label-code text-label-code">
-            <span className="text-on-surface-variant">THEATER:</span>
-            <span className="text-primary font-bold">NORTHERN &amp; WESTERN COMMAND</span>
-            <span className="text-outline-variant px-1">/</span>
-            <span className="text-on-surface-variant">TIER:</span>
-            <span className="text-secondary font-bold">SEC-BRAVO (POONCH BUFFER)</span>
+          <div className="flex items-center gap-1 font-label-code text-label-code flex-wrap">
+            <span className="text-on-surface-variant">INCIDENT LINK:</span>
+            <span className="text-secondary font-bold">CAM-03 → BUNKER / OUTPOST ALPHA → {activeInc?.status || 'ACTIVE INCIDENT'}</span>
             <span className="text-outline-variant px-1">/</span>
             <span className="text-error bg-error-container/20 px-1 font-mono uppercase font-bold">
-              {alerts.length > 0 ? `BREACH ACTIVE [${alerts[0]?.id || 'P-019'}]` : 'GRID NORMAL'}
+              {activeInc ? `${activeInc.event_type || 'PROTECTED-AREA INTRUSION'} [DEMO / SIMULATION]` : (alerts.length > 0 ? `BREACH ACTIVE [${alerts[0]?.id || 'P-019'}]` : 'GRID NORMAL')}
             </span>
           </div>
         </div>
@@ -162,6 +174,40 @@ export const DigitalBorderTwin = ({
             DIGITAL TWIN TELEMETRY
           </div>
         </div>
+      </div>
+
+      {/* PROTECTED ASSETS & BUNKER CORRELATION STRIP (Section 15) */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-space-xs mb-space-sm">
+        {protectedAssets.map((asset, i) => {
+          const isAlert = asset.status === 'ALERT' || asset.status === 'CRITICAL';
+          return (
+            <div
+              key={i}
+              onClick={() => onNavigateToScreen('dashboard')}
+              className={`p-space-sm border cursor-pointer flex items-center justify-between ${
+                isAlert
+                  ? 'bg-error-container/20 border-error'
+                  : 'bg-surface-container-low border-outline-variant'
+              }`}
+            >
+              <div>
+                <div className="font-label-code text-label-code font-bold text-on-surface">
+                  {i + 1}. {asset.name} — <span className="text-secondary">{asset.camera_id}</span>
+                </div>
+                <div className="font-label-micro text-label-micro text-on-surface-variant">
+                  {asset.camera_id} → {asset.zone_name} → {isAlert ? 'ACTIVE INCIDENT' : asset.status}
+                </div>
+              </div>
+              <span
+                className={`px-2 py-0.5 font-label-micro text-label-micro font-bold uppercase ${
+                  isAlert ? 'bg-error text-on-error' : 'bg-surface-container-highest text-primary'
+                }`}
+              >
+                {asset.status}
+              </span>
+            </div>
+          );
+        })}
       </div>
 
       {/* MAIN DUAL-PANEL BORDER TWIN CANVAS */}
@@ -418,23 +464,23 @@ export const DigitalBorderTwin = ({
                     strokeWidth="0.8"
                   />
                   <text className="font-label-code text-[10px] font-bold" fill="#4cd7f6" x="445" y="300">
-                    CAM-04 (EO/IR THERMAL)
+                    CAM-03 (BUNKER / OUTPOST ALPHA)
                   </text>
 
-                  {/* BOP-07 BASE OF OPERATION */}
+                  {/* BUNKER / OUTPOST ALPHA PROTECTED STRUCTURE */}
                   <rect
                     x="475"
                     y="330"
                     width="14"
                     height="14"
                     fill="#262b2f"
-                    stroke="#4be277"
+                    stroke="#ffb4ab"
                     strokeWidth="1.5"
                   />
-                  <text className="font-label-code text-[11px] font-bold" fill="#4be277" x="495" y="341">
-                    BOP-07 (DELTA BASE)
+                  <text className="font-label-code text-[11px] font-bold" fill="#ffb4ab" x="495" y="341">
+                    OUTPOST ALPHA (BUNKER ZONE — CAM-03)
                   </text>
-                  <circle cx="482" cy="337" r="2" fill="#4be277" />
+                  <circle cx="482" cy="337" r="2" fill="#ffb4ab" />
                 </g>
 
                 {/* NORTH COMPASS EMBLEM */}
@@ -448,32 +494,32 @@ export const DigitalBorderTwin = ({
                 </g>
               </svg>
 
-              {/* MINI FLOATING HUD: LIVE CAM-04 PIP STREAM */}
+              {/* MINI FLOATING HUD: CAM-03 BUNKER / OUTPOST ALPHA PIP STREAM */}
               <div className="absolute bottom-space-sm right-space-sm w-72 bg-surface-container-low shadow-xl p-space-xs z-30">
                 <div className="flex items-center justify-between bg-surface-container-highest px-space-xs py-0.5 mb-1">
                   <div className="flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-error animate-pulse" />
                     <span className="font-label-micro text-label-micro text-error font-bold">
-                      LIVE CAM-04 EO/IR STREAM
+                      CAM-03 BUNKER / OUTPOST ALPHA [DEMO]
                     </span>
                   </div>
                   <span className="font-label-micro text-label-micro text-on-surface-variant font-mono">
-                    30.1 FPS
+                    24 FPS
                   </span>
                 </div>
 
                 <div className="relative w-full h-36 bg-surface-container-lowest overflow-hidden flex items-center justify-center">
                   <img
-                    className="w-full h-full object-cover opacity-80"
-                    alt="Thermal PIP surveillance"
-                    src={BORDER_TWIN_PIP_IMG}
+                    className="w-full h-full object-cover opacity-90"
+                    alt="CAM-03 Bunker Outpost Demo PIP"
+                    src={activeFusion?.snapshots?.[0]?.snapshot_url || '/demo/incidents/cam03_event_intrusion.jpg'}
                   />
 
                   {/* OVERLAY DETECTION BOUNDING BOX */}
                   <div className="absolute inset-0 pointer-events-none p-4 flex items-center justify-center">
                     <div className="relative w-20 h-28 border border-error bg-error-container/10">
                       <div className="absolute -top-4 -left-1 bg-surface-container-lowest px-1 font-label-micro text-label-micro text-error font-bold whitespace-nowrap">
-                        TARGET LOCKED [96.8%]
+                        PERSON #{activeInc?.track_id || 'P-001'} [{activeInc?.confidence || '92.8'}%]
                       </div>
                       <div className="absolute top-0 left-0 w-2 h-2 border-t-2 border-l-2 border-error" />
                       <div className="absolute top-0 right-0 w-2 h-2 border-t-2 border-r-2 border-error" />

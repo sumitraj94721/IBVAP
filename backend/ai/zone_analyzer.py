@@ -15,10 +15,48 @@ logger = logging.getLogger("IBVAP.ZoneAnalyzer")
 DEFAULT_ZONE = {
     "id": "ZONE-ALPHA",
     "name": "SECTOR ALPHA RESTRICTED",
+    "zone_type": "RESTRICTED_ZONE",
+    "asset_type": "OUTPOST",
     "nx": 0.30,
     "ny": 0.20,
     "nw": 0.50,
     "nh": 0.65,
+}
+
+DEFAULT_CAMERA_ZONES: Dict[str, Dict[str, Any]] = {
+    "CAM-01": DEFAULT_ZONE.copy(),
+    "CAM-02": {
+        "id": "ZONE-BRAVO",
+        "name": "PERIMETER FENCE BRAVO",
+        "zone_type": "RESTRICTED_ZONE",
+        "asset_type": "GATE",
+        "nx": 0.25,
+        "ny": 0.22,
+        "nw": 0.55,
+        "nh": 0.60,
+    },
+    "CAM-03": {
+        "id": "ZONE-BUNKER-ALPHA",
+        "name": "BUNKER / OUTPOST ALPHA",
+        "zone_type": "BUNKER_PROTECTED_ZONE",
+        "asset_type": "BUNKER",
+        "nx": 0.48,
+        "ny": 0.18,
+        "nw": 0.46,
+        "nh": 0.68,
+        "detection_mode": "CONFIGURED_PROTECTED_ZONE",
+    },
+    "CAM-04": {
+        "id": "ZONE-APPROACH-DELTA",
+        "name": "RESTRICTED APPROACH / INTRUSION AREA",
+        "zone_type": "RESTRICTED_APPROACH_ZONE",
+        "asset_type": "CHECKPOINT",
+        "nx": 0.46,
+        "ny": 0.20,
+        "nw": 0.48,
+        "nh": 0.68,
+        "detection_mode": "CONFIGURED_PROTECTED_ZONE",
+    },
 }
 
 LOITERING_THRESHOLD_SECONDS = 20  # Default dwell before loitering alert
@@ -27,17 +65,22 @@ CENTROID_HISTORY_FRAMES = 12      # Frames to track for movement direction
 
 class ZoneAnalyzer:
     """
-    Analyzes tracked targets against configurable restricted zones.
+    Analyzes tracked targets against configurable restricted and protected bunker/asset zones.
 
     Per tracked target:
-    - Determines if inside restricted zone
+    - Determines if inside restricted/protected zone
     - Tracks dwell time
     - Detects loitering (dwell > threshold)
     - Estimates movement direction from centroid history
     """
 
-    def __init__(self, loitering_threshold: float = LOITERING_THRESHOLD_SECONDS):
-        self.zones: List[Dict[str, Any]] = [DEFAULT_ZONE]
+    def __init__(self, loitering_threshold: float = LOITERING_THRESHOLD_SECONDS, camera_id: str = "CAM-01"):
+        self.camera_id = camera_id
+        default_z = DEFAULT_CAMERA_ZONES.get(camera_id, DEFAULT_ZONE).copy()
+        self.zones: List[Dict[str, Any]] = [default_z]
+        self.camera_zones: Dict[str, Dict[str, Any]] = {
+            k: v.copy() for k, v in DEFAULT_CAMERA_ZONES.items()
+        }
         self.loitering_threshold = loitering_threshold
 
         # Per-target state
@@ -48,10 +91,17 @@ class ZoneAnalyzer:
         self._in_zone_last: Dict[str, bool] = {}        # previous frame zone status
         self._loitering_alerted: Dict[str, float] = {}  # last loitering alert time
 
-    def set_zone(self, zone: Dict[str, Any]):
-        """Replace the restricted zone configuration."""
-        self.zones = [zone]
-        logger.info(f"[*] Zone updated: {zone.get('name', 'ZONE')}")
+    def set_zone(self, zone: Dict[str, Any], camera_id: Optional[str] = None):
+        """Replace the restricted/protected zone configuration."""
+        cid = camera_id or zone.get("camera_id") or self.camera_id
+        merged = {**self.camera_zones.get(cid, DEFAULT_ZONE), **zone}
+        self.camera_zones[cid] = merged
+        if cid == self.camera_id:
+            self.zones = [merged]
+        logger.info(f"[*] Zone updated for {cid}: {merged.get('name', 'ZONE')}")
+
+    def get_zone_for_camera(self, camera_id: str) -> Dict[str, Any]:
+        return self.camera_zones.get(camera_id, self.zones[0] if self.zones else DEFAULT_ZONE)
 
     def set_loitering_threshold(self, seconds: float):
         self.loitering_threshold = max(5.0, seconds)
@@ -109,26 +159,15 @@ class ZoneAnalyzer:
         targets: List[Dict[str, Any]],
         frame_width: int,
         frame_height: int,
+        camera_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Analyze a list of tracked targets against zones.
-
-        Each target must have:
-            - target_id: str
-            - box: [x, y, w, h] in pixels  (or normalized_box)
-            - normalized_box: [nx, ny, nw, nh]
-
-        Returns enriched target list with added fields:
-            - in_restricted_zone: bool
-            - zone_name: str | None
-            - dwell_seconds: float
-            - loitering: bool
-            - movement: str
-            - direction: str
-            - zone_event: None | "INTRUSION" | "LOITERING"
         """
         now = time.time()
         enriched = []
+        cid = camera_id or self.camera_id
+        active_zones = [self.camera_zones[cid]] if cid in self.camera_zones else self.zones
 
         # Collect active target IDs for cleanup
         active_ids = {t.get("target_id", "") for t in targets}
@@ -144,7 +183,6 @@ class ZoneAnalyzer:
             nbox = target.get("normalized_box", [])
 
             if len(nbox) < 4:
-                # Try computing from pixel box
                 box = target.get("box", [])
                 if len(box) == 4 and frame_width > 0 and frame_height > 0:
                     x, y, bw, bh = box
@@ -170,22 +208,26 @@ class ZoneAnalyzer:
             # Zone check
             in_zone = False
             zone_name = None
-            for zone in self.zones:
+            zone_type = "RESTRICTED_ZONE"
+            asset_type = "OUTPOST"
+            for zone in active_zones:
                 if self._is_centroid_in_zone(cx_norm, cy_norm, zone):
                     in_zone = True
                     zone_name = zone.get("name", "RESTRICTED ZONE")
+                    zone_type = zone.get("zone_type", "RESTRICTED_ZONE")
+                    asset_type = zone.get("asset_type", "OUTPOST")
                     break
 
             # Track dwell time
             if in_zone:
                 if tid not in self._zone_entry_time:
                     self._zone_entry_time[tid] = now
-                    logger.info(f"[*] Target {tid} entered zone: {zone_name}")
+                    logger.info(f"[*] Target {tid} entered zone on {cid}: {zone_name}")
                 dwell = now - self._zone_entry_time[tid]
             else:
                 if tid in self._zone_entry_time:
                     del self._zone_entry_time[tid]
-                    logger.info(f"[*] Target {tid} exited zone.")
+                    logger.info(f"[*] Target {tid} exited zone on {cid}.")
                 dwell = 0.0
 
             # Determine zone event type
@@ -193,6 +235,8 @@ class ZoneAnalyzer:
             if in_zone:
                 if dwell >= self.loitering_threshold:
                     zone_event = "LOITERING"
+                elif zone_type in ("BUNKER_PROTECTED_ZONE", "RESTRICTED_APPROACH_ZONE"):
+                    zone_event = "PROTECTED_AREA_INTRUSION"
                 else:
                     zone_event = "INTRUSION"
 
@@ -209,6 +253,8 @@ class ZoneAnalyzer:
                 **target,
                 "in_restricted_zone": in_zone,
                 "zone_name": zone_name,
+                "zone_type": zone_type if in_zone else None,
+                "asset_type": asset_type if in_zone else None,
                 "dwell_seconds": round(dwell, 1),
                 "loitering": zone_event == "LOITERING",
                 "movement": movement,

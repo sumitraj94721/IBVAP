@@ -410,6 +410,40 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
   // Multi-camera Incident Fusion state (populated from /ws/stream or /api/incidents/fusion)
   const [fusionState, setFusionState] = useState(null);
   const [isTriggeringDemo, setIsTriggeringDemo] = useState(false);
+  const [isTriggeringBunkerDemo, setIsTriggeringBunkerDemo] = useState(false);
+
+  // CAM-03 (Bunker/Outpost) & CAM-04 (Restricted Approach) Demo Media Sources
+  const [mediaSources, setMediaSources] = useState({
+    'CAM-03': 'DEMO VIDEO',
+    'CAM-04': 'DEMO VIDEO',
+  });
+  const mediaSourcesRef = useRef(mediaSources);
+  useEffect(() => { mediaSourcesRef.current = mediaSources; }, [mediaSources]);
+
+  // Real YOLOv8 + Zone AI telemetry per demo camera (CAM-03 & CAM-04)
+  const [camDemoTelemetry, setCamDemoTelemetry] = useState({
+    'CAM-03': null,
+    'CAM-04': null,
+  });
+  const camDemoTelemetryRef = useRef(camDemoTelemetry);
+  useEffect(() => { camDemoTelemetryRef.current = camDemoTelemetry; }, [camDemoTelemetry]);
+
+  // Configurable Bunker / Protected Zone Editor state
+  const [zoneEditorCam, setZoneEditorCam] = useState(null); // 'CAM-03' | 'CAM-04' | null
+  const [zoneDraft, setZoneDraft] = useState({
+    name: 'BUNKER / OUTPOST ALPHA',
+    asset_name: 'BORDER OUTPOST ALPHA',
+    nx: 0.48,
+    ny: 0.18,
+    nw: 0.46,
+    nh: 0.68,
+  });
+
+  // Incident Replay state (0 = BEFORE EVENT, 1 = EVENT, 2 = AFTER EVENT)
+  const [replayStageIdx, setReplayStageIdx] = useState(1);
+  const [isReplayPlaying, setIsReplayPlaying] = useState(false);
+  const evidenceSectionRef = useRef(null);
+  const replaySectionRef = useRef(null);
 
   const [inspectedObject, setInspectedObject] = useState(null);
   const [activeIssueAlert, setActiveIssueAlert] = useState(null);
@@ -420,11 +454,13 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
   const overlayCanvasRef = useRef(null);
   const filterCanvasRef = useRef(null);   // NEW: CAM-01 vision filter display canvas
   const offscreenCanvasRef = useRef(null);
+  const demoOffscreenCanvasRef = useRef(null);
   const websocketRef = useRef(null);
   const isProcessingFrameRef = useRef(false);
   const streamRef = useRef(null);
   const visionModesRef = useRef(visionModes);
   const frameCounterRef = useRef(0);
+  const demoTurnRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -449,10 +485,22 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
   // Keep ref in sync so animation loops see latest mode without stale closure
   useEffect(() => { visionModesRef.current = visionModes; }, [visionModes]);
 
-  // References for CAM-02, CAM-03, CAM-04 simulation canvases
+  // References for CAM-02, CAM-03, CAM-04 simulation canvases and demo media elements
   const canvasRefs = {
     'CAM-01': useRef(null), // fallback simulation canvas if webcam denied
     'CAM-02': useRef(null),
+    'CAM-03': useRef(null),
+    'CAM-04': useRef(null),
+  };
+  const demoVideoRefs = {
+    'CAM-03': useRef(null),
+    'CAM-04': useRef(null),
+  };
+  const demoImgRefs = {
+    'CAM-03': useRef(null),
+    'CAM-04': useRef(null),
+  };
+  const demoOverlayRefs = {
     'CAM-03': useRef(null),
     'CAM-04': useRef(null),
   };
@@ -598,7 +646,13 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
           try {
             const data = JSON.parse(event.data);
             if (data.type === 'telemetry') {
+              const camId = data.camera_id || 'CAM-01';
               const updated = {
+                cameraId: camId,
+                isDemo: Boolean(data.is_demo),
+                scenarioLabel: data.scenario_label || null,
+                protectedZone: data.protected_zone || null,
+                structureDetection: data.structure_detection || 'NOT CONFIGURED',
                 latencyMs: data.latency_ms || 0,
                 targets: data.targets || [],
                 faces: data.faces || [],
@@ -608,7 +662,6 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                 anprEvents: data.anpr_events || [],
                 totalFaces: data.total_faces || (data.targets?.length || 0),
                 highThreats: data.high_threat_count || 0,
-                // Multi-object & activity AI fields
                 objects: data.objects || [],
                 odPersons: data.od_persons || [],
                 odVehicles: data.od_vehicles || [],
@@ -625,20 +678,23 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                 personActivityCards: data.person_activity_cards || [],
                 fusion: data.fusion || null,
               };
-              setAiTelemetry(updated);
+
+              if (camId === 'CAM-03' || camId === 'CAM-04') {
+                setCamDemoTelemetry((prev) => ({ ...prev, [camId]: updated }));
+              } else {
+                setAiTelemetry(updated);
+              }
+
               if (data.fusion) {
                 setFusionState(data.fusion);
               }
-              // Notify parent (App.jsx) with AI data for alerts/analytics
               if (onAiUpdate) onAiUpdate(updated);
-              // Show on-screen AI issue panel for high-priority alerts
+
               const criticalAlerts = (updated.aiAlerts || []).filter(
-                a => a.severity === 'CRITICAL' || a.severity === 'HIGH'
+                (a) => a.severity === 'CRITICAL' || a.severity === 'HIGH'
               );
               if (criticalAlerts.length > 0) {
                 setActiveIssueAlert(criticalAlerts[0]);
-                if (activeIssueTimerRef.current) clearTimeout(activeIssueTimerRef.current);
-                activeIssueTimerRef.current = setTimeout(() => setActiveIssueAlert(null), 8000);
               }
             }
           } catch (e) {
@@ -690,6 +746,51 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
     return () => { cancelled = true; };
   }, []);
 
+  // Incident Replay auto-stepper (BEFORE EVENT -> EVENT -> AFTER EVENT)
+  useEffect(() => {
+    if (!isReplayPlaying) return;
+    const timer = setInterval(() => {
+      setReplayStageIdx((prev) => {
+        if (prev >= 2) {
+          setIsReplayPlaying(false);
+          return 2;
+        }
+        return prev + 1;
+      });
+    }, 1500);
+    return () => clearInterval(timer);
+  }, [isReplayPlaying]);
+
+  // Trigger Real YOLOv8 Bunker & Intruder Demo Scenario (CAM-03 Bunker Outpost + CAM-04 Approach)
+  const handleTriggerBunkerIntruderDemo = async () => {
+    setIsTriggeringBunkerDemo(true);
+    try {
+      setMediaSources({ 'CAM-03': 'DEMO VIDEO', 'CAM-04': 'DEMO VIDEO' });
+      const res = await fetch('/api/incidents/bunker-demo', { method: 'POST' });
+      if (res.ok) {
+        const demoData = await res.json();
+        const refreshRes = await fetch('/api/incidents/fusion');
+        const fullFusion = refreshRes.ok ? await refreshRes.json() : null;
+        if (fullFusion) {
+          setFusionState(fullFusion);
+        }
+        setReplayStageIdx(1);
+        if (demoData.alert && onAiUpdate) {
+          onAiUpdate({
+            ...aiTelemetry,
+            aiAlerts: [demoData.alert, ...(aiTelemetry.aiAlerts || [])],
+            fusion: fullFusion || fusionState,
+          });
+          setActiveIssueAlert(demoData.alert);
+        }
+      }
+    } catch (e) {
+      console.warn('[IBVAP] Bunker Intruder Demo trigger error:', e);
+    } finally {
+      setIsTriggeringBunkerDemo(false);
+    }
+  };
+
   // Trigger SIH Judge Multi-Camera Correlation Demo (CAM-01 Normal, CAM-02/03/04 Correlated)
   const handleTriggerSihDemoFusion = async () => {
     setIsTriggeringDemo(true);
@@ -709,14 +810,79 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
             fusion: fullFusion || fusionState,
           });
           setActiveIssueAlert(demoData.alert);
-          if (activeIssueTimerRef.current) clearTimeout(activeIssueTimerRef.current);
-          activeIssueTimerRef.current = setTimeout(() => setActiveIssueAlert(null), 9000);
         }
       }
     } catch (e) {
       console.warn('[IBVAP] SIH Demo Fusion trigger error:', e);
     } finally {
       setIsTriggeringDemo(false);
+    }
+  };
+
+  const handleAcknowledgeActiveIncident = async (incidentId) => {
+    try {
+      const res = await fetch('/api/incidents/acknowledge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ incident_id: incidentId || null }),
+      });
+      if (res.ok) {
+        const updatedFusion = await res.json();
+        setFusionState(updatedFusion);
+      }
+      setActiveIssueAlert(null);
+      setMaximizedCam(null);
+    } catch (_) {
+      handleClearPriorityCamera();
+    }
+  };
+
+  const handleOpenZoneEditor = (camId) => {
+    if (zoneEditorCam === camId) {
+      setZoneEditorCam(null);
+      return;
+    }
+    const bz = fusionState?.bunker_zones?.[camId] || (camId === 'CAM-03'
+      ? { zone_name: 'BUNKER / OUTPOST ALPHA', asset_name: 'BORDER OUTPOST ALPHA', nx: 0.48, ny: 0.18, nw: 0.46, nh: 0.68 }
+      : { zone_name: 'RESTRICTED APPROACH / INTRUSION AREA', asset_name: 'CHECKPOINT DELTA', nx: 0.46, ny: 0.20, nw: 0.48, nh: 0.68 });
+    setZoneDraft({
+      name: bz.zone_name || 'BUNKER / OUTPOST ALPHA',
+      asset_name: bz.asset_name || 'BORDER OUTPOST ALPHA',
+      nx: Number(bz.nx ?? 0.48),
+      ny: Number(bz.ny ?? 0.18),
+      nw: Number(bz.nw ?? 0.46),
+      nh: Number(bz.nh ?? 0.68),
+    });
+    setZoneEditorCam(camId);
+  };
+
+  const handleSaveZoneConfig = async (camId) => {
+    try {
+      const res = await fetch('/api/zone/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          camera_id: camId,
+          zone: {
+            name: zoneDraft.name,
+            asset_name: zoneDraft.asset_name,
+            zone_type: camId === 'CAM-03' ? 'BUNKER_PROTECTED_ZONE' : 'RESTRICTED_APPROACH_ZONE',
+            nx: Number(zoneDraft.nx),
+            ny: Number(zoneDraft.ny),
+            nw: Number(zoneDraft.nw),
+            nh: Number(zoneDraft.nh),
+          },
+        }),
+      });
+      if (res.ok) {
+        const refreshRes = await fetch('/api/incidents/fusion');
+        if (refreshRes.ok) {
+          setFusionState(await refreshRes.json());
+        }
+      }
+      setZoneEditorCam(null);
+    } catch (e) {
+      console.warn('[IBVAP] Zone config save error:', e);
     }
   };
 
@@ -731,6 +897,176 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
       setFusionState((prev) => (prev ? { ...prev, priority_camera: null, priority_reason: null } : prev));
     }
   };
+
+  // -----------------------------------------------------------------
+  // 3B. CAM-03 & CAM-04 Demo Media AI Frame Analysis + Bunker Zone Overlay
+  // -----------------------------------------------------------------
+  useEffect(() => {
+    if (!demoOffscreenCanvasRef.current) {
+      demoOffscreenCanvasRef.current = document.createElement('canvas');
+    }
+
+    const demoAiInterval = setInterval(() => {
+      const ws = websocketRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN || isProcessingFrameRef.current) {
+        return;
+      }
+
+      const camIds = ['CAM-03', 'CAM-04'];
+      const camId = camIds[demoTurnRef.current % 2];
+      demoTurnRef.current += 1;
+
+      const srcMode = mediaSourcesRef.current[camId] || 'DEMO VIDEO';
+      if (srcMode === 'SIMULATED FEED') return;
+
+      const vidEl = demoVideoRefs[camId]?.current;
+      const imgEl = demoImgRefs[camId]?.current;
+      const mediaEl = srcMode === 'DEMO VIDEO' ? vidEl : imgEl;
+      if (!mediaEl) return;
+
+      const mw = srcMode === 'DEMO VIDEO' ? mediaEl.videoWidth : mediaEl.naturalWidth;
+      const mh = srcMode === 'DEMO VIDEO' ? mediaEl.videoHeight : mediaEl.naturalHeight;
+      if (!mw || !mh) return;
+
+      try {
+        isProcessingFrameRef.current = true;
+        setTimeout(() => { isProcessingFrameRef.current = false; }, 160);
+
+        const offC = demoOffscreenCanvasRef.current;
+        offC.width = 640;
+        offC.height = 360;
+        const ctx = offC.getContext('2d');
+        ctx.drawImage(mediaEl, 0, 0, 640, 360);
+        const jpegData = offC.toDataURL('image/jpeg', 0.72);
+
+        ws.send(
+          JSON.stringify({
+            type: 'frame',
+            camera_id: camId,
+            is_demo: true,
+            source_mode: srcMode,
+            scenario_label: 'SCENARIO: BORDER INTRUSION — SIMULATION',
+            image: jpegData,
+            confidence_threshold: 0.38,
+            engine: 'yunet',
+          })
+        );
+      } catch (_) {
+        isProcessingFrameRef.current = false;
+      }
+    }, 950);
+
+    return () => clearInterval(demoAiInterval);
+  }, []);
+
+  // Draw Bunker / Protected Zone + Real YOLOv8 Bounding Boxes on CAM-03 and CAM-04 Demo Feeds
+  useEffect(() => {
+    let animId;
+    const renderDemoOverlays = () => {
+      ['CAM-03', 'CAM-04'].forEach((camId) => {
+        const canvas = demoOverlayRefs[camId]?.current;
+        if (!canvas) return;
+        const srcMode = mediaSourcesRef.current[camId] || 'DEMO VIDEO';
+        if (srcMode === 'SIMULATED FEED') return;
+
+        const cw = canvas.clientWidth || 480;
+        const ch = canvas.clientHeight || 270;
+        if (canvas.width !== cw || canvas.height !== ch) {
+          canvas.width = cw;
+          canvas.height = ch;
+        }
+
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, cw, ch);
+
+        const tel = camDemoTelemetryRef.current[camId];
+        const bz = fusionState?.bunker_zones?.[camId] || tel?.protectedZone || (
+          camId === 'CAM-03'
+            ? { zone_name: 'BUNKER / OUTPOST ALPHA', asset_name: 'BORDER OUTPOST ALPHA', nx: 0.48, ny: 0.18, nw: 0.46, nh: 0.68, status: 'SECURE' }
+            : { zone_name: 'RESTRICTED APPROACH / INTRUSION AREA', asset_name: 'CHECKPOINT DELTA', nx: 0.46, ny: 0.20, nw: 0.48, nh: 0.68, status: 'SECURE' }
+        );
+
+        const nx = Number(bz.nx ?? 0.48);
+        const ny = Number(bz.ny ?? 0.18);
+        const nw = Number(bz.nw ?? 0.46);
+        const nh = Number(bz.nh ?? 0.68);
+        const zx = nx * cw;
+        const zy = ny * ch;
+        const zw = nw * cw;
+        const zh = nh * ch;
+
+        const targets = tel?.targets || [];
+        const vehicles = tel?.vehicles || [];
+        const hasIntrusion = (tel?.zoneIntrusions > 0) || targets.some((t) => t.in_restricted_zone) || bz.status === 'ALERT';
+
+        // 1. Top-left mandatory DEMO / SIMULATION scenario badge
+        ctx.fillStyle = 'rgba(6, 12, 24, 0.86)';
+        ctx.fillRect(6, 6, Math.min(cw - 12, 315), 20);
+        ctx.strokeStyle = '#fbbf24';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(6, 6, Math.min(cw - 12, 315), 20);
+        ctx.fillStyle = '#fbbf24';
+        ctx.font = 'bold 9px "JetBrains Mono", monospace';
+        ctx.fillText(`◈ DEMO / SIMULATION (${srcMode}) — BORDER INTRUSION`, 12, 19);
+
+        // 2. Bunker / Protected Zone boundary & corner brackets
+        const zoneColor = hasIntrusion ? '#ef4444' : '#00f0ff';
+        ctx.fillStyle = hasIntrusion ? 'rgba(239, 68, 68, 0.14)' : 'rgba(0, 240, 255, 0.07)';
+        ctx.fillRect(zx, zy, zw, zh);
+
+        ctx.strokeStyle = zoneColor;
+        ctx.lineWidth = hasIntrusion ? 2 : 1.5;
+        ctx.setLineDash([6, 4]);
+        ctx.strokeRect(zx, zy, zw, zh);
+        ctx.setLineDash([]);
+
+        // Zone label header
+        const zLabel = `${bz.zone_name || (camId === 'CAM-03' ? 'BUNKER / OUTPOST ALPHA' : 'RESTRICTED APPROACH AREA')} [${hasIntrusion ? 'INTRUSION ALERT' : 'PROTECTED ZONE'}]`;
+        ctx.fillStyle = 'rgba(6, 12, 24, 0.88)';
+        ctx.fillRect(zx, Math.max(28, zy - 18), Math.min(zw, 265), 16);
+        ctx.fillStyle = zoneColor;
+        ctx.font = 'bold 8.5px "JetBrains Mono", monospace';
+        ctx.fillText(zLabel, zx + 5, Math.max(39, zy - 7));
+
+        // 3. Draw real YOLOv8 Person Detections
+        targets.forEach((t) => {
+          const box = t.box || {};
+          const bx = (box.x ?? 0.1) * cw;
+          const by = (box.y ?? 0.2) * ch;
+          const bw = (box.w ?? 0.2) * cw;
+          const bh = (box.h ?? 0.5) * ch;
+          const inZ = Boolean(t.in_restricted_zone);
+          const bCol = inZ ? '#ef4444' : '#10b981';
+
+          ctx.strokeStyle = bCol;
+          ctx.lineWidth = 2;
+          ctx.strokeRect(bx, by, bw, bh);
+
+          const tag = `PERSON #${t.target_id || 'P-001'} [${Math.round(t.confidence || 92)}%]${inZ ? ' • IN BUNKER ZONE' : ''}`;
+          ctx.fillStyle = 'rgba(6, 12, 24, 0.9)';
+          ctx.fillRect(bx, Math.max(28, by - 18), Math.min(cw - bx - 4, 215), 16);
+          ctx.fillStyle = bCol;
+          ctx.font = 'bold 8.5px "JetBrains Mono", monospace';
+          ctx.fillText(tag, bx + 4, Math.max(39, by - 7));
+        });
+
+        // 4. Draw real YOLOv8 Vehicle Detections (if any)
+        vehicles.forEach((v) => {
+          const [vnx, vny, vnw, vnh] = v.normalized_box || [0.2, 0.3, 0.2, 0.2];
+          const vx = vnx * cw, vy = vny * ch, vw = vnw * cw, vh = vnh * ch;
+          ctx.strokeStyle = '#38bdf8';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(vx, vy, vw, vh);
+          ctx.fillStyle = '#38bdf8';
+          ctx.font = 'bold 8.5px "JetBrains Mono", monospace';
+          ctx.fillText(`${v.object_type || 'VEHICLE'} #${v.track_id}`, vx + 4, Math.max(20, vy - 5));
+        });
+      });
+      animId = requestAnimationFrame(renderDemoOverlays);
+    };
+    animId = requestAnimationFrame(renderDemoOverlays);
+    return () => cancelAnimationFrame(animId);
+  }, [fusionState]);
 
   // -----------------------------------------------------------------
   // 4. Capture & Send Camera Frames to FastAPI Backend
@@ -1498,6 +1834,61 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
   const crossTimeline = activeFusion?.cross_camera_timeline || [];
   const whatIsHappening = activeFusion?.what_is_happening_now || [];
   const snapshotsList = activeFusion?.snapshots || [];
+  const bunkerZones = activeFusion?.bunker_zones || {};
+  const protectedAssets = activeFusion?.protected_assets || [
+    { asset_id: 'ASSET-01', name: 'OUTPOST ALPHA', asset_type: 'BUNKER / OUTPOST', camera_id: 'CAM-03', zone_name: 'BUNKER / OUTPOST ALPHA', status: 'SECURE', persons: 0, vehicles: 0, ai_status: 'ACTIVE', last_event: 'NONE' },
+    { asset_id: 'ASSET-02', name: 'CHECKPOINT DELTA', asset_type: 'RESTRICTED CORRIDOR', camera_id: 'CAM-04', zone_name: 'RESTRICTED APPROACH / INTRUSION AREA', status: 'SECURE', persons: 0, vehicles: 0, ai_status: 'ACTIVE', last_event: 'NONE' },
+    { asset_id: 'ASSET-03', name: 'FORWARD GATE ALPHA', asset_type: 'CHECKPOINT', camera_id: 'CAM-01', zone_name: 'BORDER ZONE A', status: 'SECURE', persons: 0, vehicles: 0, ai_status: 'ACTIVE', last_event: 'NONE' },
+  ];
+  const activeIncident = fusedIncidents[0] || null;
+  const defaultReplayStages = [
+    {
+      stage: 'BEFORE EVENT',
+      timestamp: '14:18:10',
+      camera_id: 'CAM-03',
+      title: '14:18:10 — Person outside bunker zone',
+      description: 'Person #P-001 detected by YOLOv8 (91.5%) approaching BUNKER / OUTPOST ALPHA perimeter.',
+      snapshot_url: '/demo/incidents/cam03_before_event.jpg',
+      confidence: 91.5,
+      in_zone: false,
+    },
+    {
+      stage: 'EVENT',
+      timestamp: '14:18:18',
+      camera_id: 'CAM-03',
+      title: '14:18:18 — Person enters bunker zone',
+      description: 'PERSON + BUNKER PROTECTED ZONE + ZONE ENTRY -> PROTECTED-AREA INTRUSION (92.8%).',
+      snapshot_url: '/demo/incidents/cam03_event_intrusion.jpg',
+      confidence: 92.8,
+      in_zone: true,
+    },
+    {
+      stage: 'AFTER EVENT',
+      timestamp: '14:18:22',
+      camera_id: 'CAM-03',
+      title: '14:18:22 — Alert + snapshot saved',
+      description: 'Subject #P-001 tracked inside BUNKER / OUTPOST ALPHA (92.4%); correlated movement on CAM-04 (POSSIBLE CROSS-CAMERA EVENT).',
+      snapshot_url: '/demo/incidents/cam03_after_event.jpg',
+      confidence: 92.4,
+      in_zone: true,
+    },
+  ];
+  const replayStages = (activeIncident?.replay && activeIncident.replay.length === 3)
+    ? activeIncident.replay
+    : defaultReplayStages;
+  const currentReplayFrame = replayStages[replayStageIdx] || replayStages[1];
+  const defaultChecklist = [
+    { item: 'Person detected', verified: true, detail: 'YOLOv8 Person #P-001 (92.8%)' },
+    { item: 'Protected zone entry', verified: true, detail: 'BUNKER / OUTPOST ALPHA' },
+    { item: 'Timestamp recorded', verified: true, detail: activeIncident?.timestamp || '14:18:18' },
+    { item: 'Snapshot saved', verified: true, detail: snapshotsList[0]?.snapshot_id || 'PRESERVED' },
+    { item: 'Vehicle detected', verified: false, detail: 'NONE' },
+    { item: 'Face recognized', verified: false, detail: 'NO FACE MATCH' },
+    { item: 'Weapon model', verified: false, detail: 'NOT CONFIGURED' },
+    { item: 'Structure AI model', verified: false, detail: 'NOT CONFIGURED (Using Configured Bunker Zone)' },
+  ];
+  const evidenceChecklist = activeIncident?.evidence_checklist || defaultChecklist;
+
   const activityCards = (aiTelemetry.personActivityCards && aiTelemetry.personActivityCards.length > 0)
     ? aiTelemetry.personActivityCards
     : (aiTelemetry.targets || []).map((t) => t.activity_card).filter(Boolean);
@@ -1546,6 +1937,26 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
           </button>
         ))}
 
+        {/* Bunker & Intruder Demo Scenario Trigger (Real YOLOv8 on CAM-03 & CAM-04) */}
+        <button
+          className="btn-cam-action"
+          style={{
+            fontSize: 9.5,
+            padding: '3px 10px',
+            letterSpacing: 0.6,
+            fontWeight: 700,
+            background: 'rgba(239, 68, 68, 0.18)',
+            borderColor: '#ef4444',
+            color: '#fca5a5',
+            marginLeft: 6,
+          }}
+          onClick={handleTriggerBunkerIntruderDemo}
+          disabled={isTriggeringBunkerDemo}
+          title="Run Real YOLOv8 Bunker & Intruder Demo Scenario on CAM-03 (Bunker/Outpost Alpha) & CAM-04 (Restricted Approach)"
+        >
+          {isTriggeringBunkerDemo ? '⏳ ANALYZING BUNKER DEMO...' : '🛡 BUNKER & INTRUDER DEMO (CAM-03 / CAM-04)'}
+        </button>
+
         {/* SIH Multi-Camera Correlation Demonstration Trigger */}
         <button
           className="btn-cam-action"
@@ -1557,7 +1968,6 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
             background: 'rgba(249, 115, 22, 0.16)',
             borderColor: '#f97316',
             color: '#fbbf24',
-            marginLeft: 6,
           }}
           onClick={handleTriggerSihDemoFusion}
           disabled={isTriggeringDemo}
@@ -1658,6 +2068,7 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
           if (maximizedCam && maximizedCam !== cam.id) return null;
 
           const isCam1 = cam.id === 'CAM-01';
+          const isDemoCam = cam.id === 'CAM-03' || cam.id === 'CAM-04';
           const isPriority = priorityCam === cam.id;
           const isAffected = affectedCams.includes(cam.id);
           const isAlerting = isPriority || alerts.some((a) => a.camera && a.camera.includes(cam.id) && (a.severity === 'CRITICAL' || a.severity === 'HIGH'));
@@ -1666,6 +2077,25 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
           const displayedResolution = cam.id === 'CAM-02'
             ? (cam2Status.resolution || '--')
             : cam.resolution;
+
+          const srcMode = isDemoCam ? (mediaSources[cam.id] || 'DEMO VIDEO') : 'LIVE';
+          const demoTel = isDemoCam ? camDemoTelemetry[cam.id] : null;
+          const bzInfo = isDemoCam
+            ? (bunkerZones[cam.id] || {
+                asset_name: cam.assetName || (cam.id === 'CAM-03' ? 'BORDER OUTPOST ALPHA' : 'CHECKPOINT DELTA'),
+                zone_name: cam.zoneName || (cam.id === 'CAM-03' ? 'BUNKER / OUTPOST ALPHA' : 'RESTRICTED APPROACH / INTRUSION AREA'),
+                status: (demoTel?.zoneIntrusions > 0 || isAffected) ? 'ALERT' : 'SECURE',
+                persons: demoTel?.targets?.length ?? (isAffected ? 1 : 0),
+                vehicles: demoTel?.vehicles?.length ?? 0,
+                ai_status: 'ACTIVE',
+                last_event: (demoTel?.zoneIntrusions > 0 || isAffected) ? 'PROTECTED AREA ENTRY' : 'NONE',
+              })
+            : null;
+
+          const demoVideoSrc = cam.demoVideoUrl || (cam.id === 'CAM-03' ? '/demo/border/cam03_bunker_demo.mp4' : '/demo/border/cam04_intrusion_demo.mp4');
+          const demoImageSrc = srcMode === 'OUTPOST IMAGE'
+            ? (cam.demoImageUrl || (cam.id === 'CAM-03' ? '/demo/border/cam03_bunker_outpost.jpg' : '/demo/border/cam04_restricted_approach.jpg'))
+            : (cam.eventImageUrl || (cam.id === 'CAM-03' ? '/demo/incidents/cam03_event_intrusion.jpg' : '/demo/incidents/cam04_event_intrusion.jpg'));
 
           return (
             <div
@@ -1684,6 +2114,22 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                 <div className="panel-header-left" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                   <span className="cam-badge">{cam.id}</span>
                   <span className="cam-name">{cam.name}</span>
+                  {isDemoCam && (
+                    <span
+                      style={{
+                        background: 'rgba(251, 191, 36, 0.16)',
+                        border: '1px solid #fbbf24',
+                        color: '#fbbf24',
+                        fontSize: 8.5,
+                        fontWeight: 700,
+                        padding: '1px 5px',
+                        borderRadius: 3,
+                      }}
+                      title="SCENARIO: BORDER INTRUSION — SIMULATION"
+                    >
+                      DEMO / SIMULATION
+                    </span>
+                  )}
                   {isPriority && (
                     <span
                       style={{
@@ -1732,6 +2178,50 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                 </div>
 
                 <div className="panel-header-right">
+                  {/* Media Source Selector for CAM-03 and CAM-04 (Section 2) */}
+                  {isDemoCam && (
+                    <>
+                      <select
+                        className="tactical-input"
+                        style={{
+                          fontSize: 9.5,
+                          padding: '1px 5px',
+                          height: 22,
+                          maxWidth: 132,
+                          background: '#091326',
+                          borderColor: '#fbbf24',
+                          color: '#fbbf24',
+                          fontFamily: 'var(--font-ui)',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                        }}
+                        value={srcMode}
+                        onChange={(e) => setMediaSources((prev) => ({ ...prev, [cam.id]: e.target.value }))}
+                        title={`Select media source for ${cam.id} (${cam.role || 'Border Demo Feed'})`}
+                      >
+                        <option value="DEMO VIDEO">🎬 DEMO VIDEO</option>
+                        <option value="DEMO IMAGE">🖼 INTRUDER IMAGE</option>
+                        <option value="OUTPOST IMAGE">🏰 BUNKER IMAGE</option>
+                        <option value="SIMULATED FEED">📡 SIMULATED FEED</option>
+                      </select>
+
+                      <button
+                        className="btn-cam-action"
+                        style={{
+                          fontSize: 9,
+                          padding: '1px 6px',
+                          height: 22,
+                          borderColor: zoneEditorCam === cam.id ? '#fbbf24' : '#00f0ff',
+                          color: zoneEditorCam === cam.id ? '#fbbf24' : '#00f0ff',
+                        }}
+                        onClick={() => handleOpenZoneEditor(cam.id)}
+                        title="Configure Bunker / Protected Outpost Zone coordinates"
+                      >
+                        ⚙ ZONE
+                      </button>
+                    </>
+                  )}
+
                   {/* Vision Mode Selector Dropdown for EVERY Camera */}
                   <select
                     className="tactical-input"
@@ -1858,7 +2348,7 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
               <div className="panel-viewport">
                 {isCam1 ? (
                   <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
-                    {/* Real Laptop/USB Webcam Video Feed (mirrored) - Always in DOM */}
+                    {/* Real Laptop/USB Webcam Video Feed (mirrored) - Unobstructed */}
                     <video
                       ref={(el) => {
                         videoRef.current = el;
@@ -1918,11 +2408,10 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                         const clickY = e.clientY - rect.top;
                         const cw = canvas.width;
                         const ch = canvas.height;
-                        // Check person targets, vehicles, and all other detected COCO objects
                         const allObjects = [
-                          ...(aiTelemetry.targets || []).map(t => ({ ...t, _type: 'person' })),
-                          ...(aiTelemetry.vehicles || []).map(v => ({ ...v, _type: 'vehicle' })),
-                          ...(aiTelemetry.otherObjects || aiTelemetry.other_objects || []).map(o => ({ ...o, _type: 'object' })),
+                          ...(aiTelemetry.targets || []).map((t) => ({ ...t, _type: 'person' })),
+                          ...(aiTelemetry.vehicles || []).map((v) => ({ ...v, _type: 'vehicle' })),
+                          ...(aiTelemetry.otherObjects || aiTelemetry.other_objects || []).map((o) => ({ ...o, _type: 'object' })),
                         ];
                         for (const obj of allObjects) {
                           const [nx, ny, nw, nh] = obj.normalized_box || [0, 0, 0, 0];
@@ -1944,8 +2433,6 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                         display: isCameraActive ? 'none' : 'block',
                       }}
                     />
-                    {/* On-screen AI Issue Alert */}
-                    <AiIssuePanel alert={activeIssueAlert} onDismiss={() => setActiveIssueAlert(null)} />
                   </div>
                 ) : cam.id === 'CAM-02' ? (
                   <div style={{ position: 'relative', width: '100%', height: '100%', background: '#050b12' }}>
@@ -1976,6 +2463,40 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                         </div>
                       </div>
                     )}
+                  </div>
+                ) : isDemoCam && srcMode !== 'SIMULATED FEED' ? (
+                  <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden', background: '#050b14' }}>
+                    {srcMode === 'DEMO VIDEO' ? (
+                      <video
+                        ref={demoVideoRefs[cam.id]}
+                        src={demoVideoSrc}
+                        autoPlay
+                        loop
+                        muted
+                        playsInline
+                        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                      />
+                    ) : (
+                      <img
+                        ref={demoImgRefs[cam.id]}
+                        src={demoImageSrc}
+                        alt={`${cam.id} Demo Border Feed`}
+                        crossOrigin="anonymous"
+                        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                      />
+                    )}
+                    {/* Real YOLOv8 + Bunker Protected Zone Overlay Canvas */}
+                    <canvas
+                      ref={demoOverlayRefs[cam.id]}
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        height: '100%',
+                        pointerEvents: 'none',
+                      }}
+                    />
                   </div>
                 ) : (
                   <canvas ref={canvasRefs[cam.id]} className="feed-canvas" />
@@ -2035,12 +2556,147 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                     <>
                       <span className="fps-tag">{cam.fps} FPS</span>
                       <span className="status-tag" style={{ marginLeft: 8, color: '#fbbf24' }}>
-                        ◈ DEMO / SIMULATION
+                        ◈ DEMO / SIMULATION ({srcMode})
                       </span>
                     </>
                   )}
                 </div>
               </div>
+
+              {/* Bunker / Outpost Status Card (Section 7) — Compact strip below camera footer, never obstructing video */}
+              {isDemoCam && bzInfo && (
+                <div
+                  style={{
+                    padding: '5px 10px',
+                    background: bzInfo.status === 'ALERT' ? 'rgba(239, 68, 68, 0.14)' : 'rgba(6, 14, 28, 0.95)',
+                    borderTop: `1px solid ${bzInfo.status === 'ALERT' ? '#ef4444' : 'rgba(0, 240, 255, 0.22)'}`,
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                    fontFamily: 'var(--font-ui)',
+                    fontSize: 8.5,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <strong style={{ color: '#00f0ff' }}>{bzInfo.asset_name}</strong>
+                    <span style={{ color: '#94a3b8' }}>| {cam.id}</span>
+                    <span>
+                      STATUS:{' '}
+                      <strong style={{ color: bzInfo.status === 'ALERT' ? '#ef4444' : '#10b981' }}>
+                        {bzInfo.status}
+                      </strong>
+                    </span>
+                    <span>
+                      PERSONS: <strong style={{ color: '#f8fafc' }}>{bzInfo.persons ?? 0}</strong>
+                    </span>
+                    <span>
+                      VEHICLES: <strong style={{ color: '#f8fafc' }}>{bzInfo.vehicles ?? 0}</strong>
+                    </span>
+                    <span>
+                      AI: <strong style={{ color: '#10b981' }}>{bzInfo.ai_status || 'ACTIVE'}</strong>
+                    </span>
+                  </div>
+                  <div style={{ color: bzInfo.status === 'ALERT' ? '#fca5a5' : '#94a3b8' }}>
+                    LAST EVENT: <strong>{bzInfo.last_event || 'NONE'}</strong>
+                  </div>
+                </div>
+              )}
+
+              {/* Collapsible Bunker / Protected Zone Configurator (Section 6) */}
+              {isDemoCam && zoneEditorCam === cam.id && (
+                <div
+                  style={{
+                    padding: '8px 10px',
+                    background: 'rgba(4, 9, 20, 0.98)',
+                    borderTop: '1px solid #fbbf24',
+                    fontFamily: 'var(--font-ui)',
+                    fontSize: 8.5,
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    gap: 8,
+                  }}
+                >
+                  <strong style={{ color: '#fbbf24' }}>CONFIGURE PROTECTED ZONE ({cam.id}):</strong>
+                  <label style={{ color: '#cbd5e1' }}>
+                    Zone Name:{' '}
+                    <input
+                      className="tactical-input"
+                      style={{ width: 145, fontSize: 8.5, padding: '1px 4px' }}
+                      value={zoneDraft.name}
+                      onChange={(e) => setZoneDraft((p) => ({ ...p, name: e.target.value }))}
+                    />
+                  </label>
+                  <label style={{ color: '#cbd5e1' }}>
+                    X:{' '}
+                    <input
+                      type="number"
+                      step="0.02"
+                      min="0.05"
+                      max="0.85"
+                      className="tactical-input"
+                      style={{ width: 46, fontSize: 8.5, padding: '1px 4px' }}
+                      value={zoneDraft.nx}
+                      onChange={(e) => setZoneDraft((p) => ({ ...p, nx: parseFloat(e.target.value) || 0.4 }))}
+                    />
+                  </label>
+                  <label style={{ color: '#cbd5e1' }}>
+                    Y:{' '}
+                    <input
+                      type="number"
+                      step="0.02"
+                      min="0.05"
+                      max="0.85"
+                      className="tactical-input"
+                      style={{ width: 46, fontSize: 8.5, padding: '1px 4px' }}
+                      value={zoneDraft.ny}
+                      onChange={(e) => setZoneDraft((p) => ({ ...p, ny: parseFloat(e.target.value) || 0.2 }))}
+                    />
+                  </label>
+                  <label style={{ color: '#cbd5e1' }}>
+                    W:{' '}
+                    <input
+                      type="number"
+                      step="0.02"
+                      min="0.15"
+                      max="0.90"
+                      className="tactical-input"
+                      style={{ width: 46, fontSize: 8.5, padding: '1px 4px' }}
+                      value={zoneDraft.nw}
+                      onChange={(e) => setZoneDraft((p) => ({ ...p, nw: parseFloat(e.target.value) || 0.45 }))}
+                    />
+                  </label>
+                  <label style={{ color: '#cbd5e1' }}>
+                    H:{' '}
+                    <input
+                      type="number"
+                      step="0.02"
+                      min="0.15"
+                      max="0.90"
+                      className="tactical-input"
+                      style={{ width: 46, fontSize: 8.5, padding: '1px 4px' }}
+                      value={zoneDraft.nh}
+                      onChange={(e) => setZoneDraft((p) => ({ ...p, nh: parseFloat(e.target.value) || 0.65 }))}
+                    />
+                  </label>
+                  <button
+                    className="btn-cam-action"
+                    style={{ fontSize: 8.5, padding: '2px 8px', borderColor: '#10b981', color: '#10b981', fontWeight: 700 }}
+                    onClick={() => handleSaveZoneConfig(cam.id)}
+                  >
+                    ✓ SAVE ZONE
+                  </button>
+                  <button
+                    className="btn-cam-action"
+                    style={{ fontSize: 8.5, padding: '2px 6px', color: '#94a3b8' }}
+                    onClick={() => setZoneEditorCam(null)}
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}
@@ -2083,16 +2739,384 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
             TRACKING: <strong style={{ color: '#10b981' }}>ACTIVE</strong>
           </span>
           <span>
-            NETWORK: <strong style={{ color: isWsConnected ? '#10b981' : '#fbbf24' }}>{isWsConnected ? 'ONLINE' : 'LOCAL'}</strong>
+            BUNKER ZONES: <strong style={{ color: '#00f0ff' }}>CONFIGURED (CAM-03 / CAM-04)</strong>
           </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ color: '#94a3b8' }}>
+            STRUCTURE AI MODEL: <strong style={{ color: '#fbbf24' }}>{aiTelemetry.aiStats?.structure_detection || 'NOT CONFIGURED'}</strong>
+          </span>
           <span style={{ color: '#94a3b8' }}>
             CUSTOM OBJECT MODEL: <strong style={{ color: '#fbbf24' }}>{aiTelemetry.aiStats?.custom_object_detection || 'NOT CONFIGURED'}</strong>
           </span>
           <span style={{ color: '#94a3b8' }}>
             WEAPON MODEL: <strong style={{ color: '#fbbf24' }}>{aiTelemetry.aiStats?.weapon_detection || 'NOT CONFIGURED'}</strong>
           </span>
+        </div>
+      </div>
+
+      {/* ─── BUNKER DETECTION, INTRUDER EVIDENCE, REPLAY & PROTECTED ASSETS CONSOLE (Sections 5-14) ─── */}
+      <div
+        style={{
+          marginTop: 10,
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+          gap: 10,
+          fontFamily: 'var(--font-ui)',
+        }}
+      >
+        {/* PANEL A: COMMAND CENTER INCIDENT CARD (Section 11) & PROTECTED ASSET MONITORING (Sections 12 & 13) */}
+        <div
+          style={{
+            background: 'rgba(6, 12, 24, 0.95)',
+            border: activeIncident?.status === 'ACTIVE' ? '1px solid #ef4444' : '1px solid var(--border-subtle)',
+            borderRadius: 4,
+            padding: '10px 12px',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: 6 }}>
+            <span style={{ color: '#ef4444', fontWeight: 800, fontSize: 10.5, letterSpacing: 0.8 }}>
+              🔴 COMMAND CENTER INCIDENT CARD
+            </span>
+            <span
+              style={{
+                fontSize: 8.5,
+                padding: '1px 6px',
+                background: 'rgba(251, 191, 36, 0.16)',
+                border: '1px solid #fbbf24',
+                color: '#fbbf24',
+                borderRadius: 3,
+                fontWeight: 700,
+              }}
+            >
+              SCENARIO: BORDER INTRUSION — SIMULATION
+            </span>
+          </div>
+
+          <div
+            style={{
+              padding: '9px 10px',
+              background: 'rgba(15, 23, 42, 0.88)',
+              border: `1px solid ${activeIncident?.status === 'ACKNOWLEDGED' ? '#10b981' : '#ef4444'}`,
+              borderLeft: `4px solid ${activeIncident?.status === 'ACKNOWLEDGED' ? '#10b981' : '#ef4444'}`,
+              borderRadius: 4,
+              fontSize: 9,
+              marginBottom: 10,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+              <strong style={{ color: activeIncident?.status === 'ACKNOWLEDGED' ? '#10b981' : '#ef4444', fontSize: 10 }}>
+                {activeIncident?.status === 'ACKNOWLEDGED' ? '🟢 INCIDENT ACKNOWLEDGED' : '🔴 ACTIVE INCIDENT'}
+              </strong>
+              <span style={{ color: '#fbbf24', fontWeight: 700 }}>
+                {activeIncident?.incident_id || 'INCIDENT #IBVAP-101'}
+              </span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3px 10px', color: '#e2e8f0', fontSize: 8.8 }}>
+              <div><span style={{ color: '#94a3b8' }}>TYPE:</span> <strong style={{ color: '#fca5a5' }}>{activeIncident?.event_type || 'PROTECTED-AREA INTRUSION'}</strong></div>
+              <div><span style={{ color: '#94a3b8' }}>CAMERA:</span> <strong style={{ color: '#00f0ff' }}>{activeIncident?.primary_camera || 'CAM-03'}</strong></div>
+              <div><span style={{ color: '#94a3b8' }}>LOCATION:</span> <strong>{activeIncident?.zone_name || 'BUNKER / OUTPOST ALPHA'}</strong></div>
+              <div><span style={{ color: '#94a3b8' }}>OBJECT:</span> <strong>PERSON ({activeIncident?.persons?.length || 1})</strong></div>
+              <div><span style={{ color: '#94a3b8' }}>RISK:</span> <strong style={{ color: '#ef4444' }}>{activeIncident?.risk || 'HIGH'} ({activeIncident?.risk_score || 88}/100)</strong></div>
+              <div><span style={{ color: '#94a3b8' }}>TIME:</span> <strong>{activeIncident?.timestamp || '14:18:22'}</strong></div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <span style={{ color: '#94a3b8' }}>MODE:</span> <strong style={{ color: '#fbbf24' }}>DEMO / SIMULATION</strong> | <span style={{ color: '#38bdf8' }}>POSSIBLE CROSS-CAMERA EVENT</span>
+              </div>
+            </div>
+
+            {/* Action Buttons: [VIEW CAMERA] [VIEW EVIDENCE] [INCIDENT REPLAY] [ACKNOWLEDGE] */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+              <button
+                className="btn-cam-action"
+                style={{ fontSize: 8.5, padding: '3px 8px', borderColor: '#00f0ff', color: '#00f0ff', fontWeight: 700 }}
+                onClick={() => setMaximizedCam(maximizedCam === 'CAM-03' ? null : 'CAM-03')}
+              >
+                [VIEW CAMERA]
+              </button>
+              <button
+                className="btn-cam-action"
+                style={{ fontSize: 8.5, padding: '3px 8px', borderColor: '#fbbf24', color: '#fbbf24', fontWeight: 700 }}
+                onClick={() => evidenceSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })}
+              >
+                [VIEW EVIDENCE]
+              </button>
+              <button
+                className="btn-cam-action"
+                style={{ fontSize: 8.5, padding: '3px 8px', borderColor: '#38bdf8', color: '#38bdf8', fontWeight: 700 }}
+                onClick={() => {
+                  setReplayStageIdx(0);
+                  setIsReplayPlaying(true);
+                  replaySectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }}
+              >
+                [INCIDENT REPLAY]
+              </button>
+              <button
+                className="btn-cam-action"
+                style={{ fontSize: 8.5, padding: '3px 8px', borderColor: '#10b981', color: '#10b981', fontWeight: 700 }}
+                onClick={() => handleAcknowledgeActiveIncident(activeIncident?.incident_id)}
+              >
+                [ACKNOWLEDGE]
+              </button>
+            </div>
+          </div>
+
+          {/* Protected Asset Monitoring & Asset Health (Sections 12 & 13) */}
+          <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <span style={{ color: '#00f0ff', fontWeight: 800, fontSize: 9.5, letterSpacing: 0.6 }}>
+                🏰 PROTECTED ASSETS &amp; BUNKER HEALTH
+              </span>
+              <span style={{ fontSize: 8, color: '#94a3b8' }}>
+                SECURE / WATCH / ALERT / CRITICAL
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+              {protectedAssets.map((asset, idx) => {
+                const stColor = asset.status === 'CRITICAL' || asset.status === 'ALERT'
+                  ? '#ef4444'
+                  : asset.status === 'WATCH'
+                  ? '#fbbf24'
+                  : '#10b981';
+                return (
+                  <div
+                    key={asset.asset_id || idx}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '5px 8px',
+                      background: 'rgba(9, 15, 28, 0.88)',
+                      border: `1px solid ${stColor}44`,
+                      borderLeft: `3px solid ${stColor}`,
+                      borderRadius: 3,
+                      fontSize: 8.5,
+                    }}
+                  >
+                    <div>
+                      <strong style={{ color: '#f8fafc' }}>
+                        {idx + 1}. {asset.name}
+                      </strong>{' '}
+                      <span style={{ color: '#00f0ff' }}>— {asset.camera_id}</span>
+                      <div style={{ color: '#94a3b8', fontSize: 8 }}>
+                        Zone: {asset.zone_name} | Persons: {asset.persons ?? 0} | Vehicles: {asset.vehicles ?? 0} | Last: {asset.last_event || 'NONE'}
+                      </div>
+                    </div>
+                    <span
+                      style={{
+                        padding: '2px 7px',
+                        borderRadius: 3,
+                        background: `${stColor}22`,
+                        border: `1px solid ${stColor}`,
+                        color: stColor,
+                        fontWeight: 800,
+                        fontSize: 8.5,
+                      }}
+                    >
+                      {asset.status}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* PANEL B: INTRUDER MEDIA / EVIDENCE PANEL (Section 8) & AI CONFIDENCE + EVIDENCE CHECKLIST (Section 14) */}
+        <div
+          ref={evidenceSectionRef}
+          style={{
+            background: 'rgba(6, 12, 24, 0.95)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 4,
+            padding: '10px 12px',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: 6 }}>
+            <span style={{ color: '#fbbf24', fontWeight: 800, fontSize: 10.5, letterSpacing: 0.8 }}>
+              📷 INTRUDER MEDIA / EVIDENCE &amp; AI CHECKLIST
+            </span>
+            <span style={{ fontSize: 8.5, color: '#fbbf24', fontWeight: 700 }}>
+              DEMO / SIMULATION
+            </span>
+          </div>
+
+          {/* Captured Intruder Snapshot + Metadata (Section 8) */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '135px 1fr',
+              gap: 10,
+              padding: '8px',
+              background: 'rgba(15, 23, 42, 0.85)',
+              border: '1px solid rgba(251, 191, 36, 0.35)',
+              borderRadius: 4,
+              marginBottom: 8,
+              fontSize: 8.5,
+            }}
+          >
+            <div style={{ position: 'relative' }}>
+              <img
+                src={snapshotsList[0]?.snapshot_url || '/demo/incidents/cam03_event_intrusion.jpg'}
+                alt="Intruder Evidence Snapshot"
+                style={{ width: '100%', height: 86, objectFit: 'cover', borderRadius: 3, border: '1px solid #ef4444' }}
+              />
+              <span
+                style={{
+                  position: 'absolute',
+                  bottom: 3,
+                  left: 3,
+                  background: 'rgba(6,12,24,0.9)',
+                  color: '#fbbf24',
+                  fontSize: 7.5,
+                  padding: '1px 4px',
+                  borderRadius: 2,
+                  fontWeight: 700,
+                }}
+              >
+                DEMO / SIMULATION
+              </span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px 8px', color: '#cbd5e1' }}>
+              <div><span style={{ color: '#94a3b8' }}>Camera ID:</span> <strong style={{ color: '#00f0ff' }}>{snapshotsList[0]?.source_camera || 'CAM-03'}</strong></div>
+              <div><span style={{ color: '#94a3b8' }}>Track ID:</span> <strong style={{ color: '#fbbf24' }}>#{snapshotsList[0]?.track_id || activeIncident?.track_id || 'P-001'}</strong></div>
+              <div style={{ gridColumn: '1 / -1' }}><span style={{ color: '#94a3b8' }}>Zone Name:</span> <strong>{snapshotsList[0]?.zone || 'BUNKER / OUTPOST ALPHA'}</strong></div>
+              <div><span style={{ color: '#94a3b8' }}>Object:</span> <strong>PERSON</strong></div>
+              <div><span style={{ color: '#94a3b8' }}>Confidence:</span> <strong style={{ color: '#10b981' }}>{snapshotsList[0]?.confidence || activeIncident?.confidence || 92.8}%</strong></div>
+              <div><span style={{ color: '#94a3b8' }}>Timestamp:</span> <strong>{snapshotsList[0]?.timestamp || activeIncident?.timestamp || '14:18:18'}</strong></div>
+              <div><span style={{ color: '#94a3b8' }}>Risk Level:</span> <strong style={{ color: '#ef4444' }}>HIGH ({snapshotsList[0]?.risk_score || 88}/100)</strong></div>
+              <div style={{ gridColumn: '1 / -1', color: '#fca5a5', fontSize: 8 }}>
+                <strong>Reason:</strong> {snapshotsList[0]?.reason || 'PERSON + BUNKER PROTECTED ZONE + ZONE ENTRY -> PROTECTED-AREA INTRUSION'}
+              </div>
+            </div>
+          </div>
+
+          {/* AI Confidence + Evidence Checklist (Section 14) */}
+          <div style={{ padding: '6px 8px', background: 'rgba(9, 15, 28, 0.9)', borderRadius: 3, border: '1px solid rgba(0, 240, 255, 0.2)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: 8.5 }}>
+              <strong style={{ color: '#00f0ff' }}>EVIDENCE CHECKLIST &amp; AI VERIFICATION:</strong>
+              <span style={{ color: '#10b981', fontWeight: 700 }}>
+                AI CONFIDENCE: {activeIncident?.confidence || 92.8}%
+              </span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3px 10px', fontSize: 8.2 }}>
+              {evidenceChecklist.map((chk, idx) => (
+                <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ color: chk.verified ? '#10b981' : '#94a3b8', fontWeight: 800 }}>
+                    {chk.verified ? '✔' : '✖'}
+                  </span>
+                  <span style={{ color: chk.verified ? '#e2e8f0' : '#94a3b8' }}>
+                    {chk.item}: <strong style={{ color: chk.verified ? '#00f0ff' : '#fbbf24' }}>{chk.detail}</strong>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* PANEL C: INCIDENT REPLAY (Section 9: BEFORE EVENT -> EVENT -> AFTER EVENT) */}
+        <div
+          ref={replaySectionRef}
+          style={{
+            background: 'rgba(6, 12, 24, 0.95)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 4,
+            padding: '10px 12px',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: 6 }}>
+            <span style={{ color: '#00f0ff', fontWeight: 800, fontSize: 10.5, letterSpacing: 0.8 }}>
+              ⏪ INCIDENT REPLAY (BEFORE → EVENT → AFTER)
+            </span>
+            <button
+              className="btn-cam-action"
+              style={{
+                fontSize: 8.5,
+                padding: '2px 8px',
+                borderColor: '#00f0ff',
+                color: '#00f0ff',
+                fontWeight: 700,
+              }}
+              onClick={() => {
+                setReplayStageIdx(0);
+                setIsReplayPlaying(true);
+              }}
+            >
+              {isReplayPlaying ? '⏳ REPLAYING...' : '▶ PLAY REPLAY'}
+            </button>
+          </div>
+
+          {/* 3-Stage Selector Tabs */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 8 }}>
+            {replayStages.map((stg, idx) => {
+              const isSelected = replayStageIdx === idx;
+              const stgColor = idx === 1 ? '#ef4444' : idx === 2 ? '#fbbf24' : '#38bdf8';
+              return (
+                <button
+                  key={stg.stage || idx}
+                  onClick={() => {
+                    setIsReplayPlaying(false);
+                    setReplayStageIdx(idx);
+                  }}
+                  style={{
+                    padding: '5px 6px',
+                    background: isSelected ? `${stgColor}24` : 'rgba(15, 23, 42, 0.75)',
+                    border: `1px solid ${isSelected ? stgColor : 'rgba(255,255,255,0.12)'}`,
+                    borderRadius: 3,
+                    color: isSelected ? '#f8fafc' : '#94a3b8',
+                    fontFamily: 'var(--font-ui)',
+                    fontSize: 8.2,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                  }}
+                >
+                  <div style={{ color: stgColor }}>{stg.stage}</div>
+                  <div style={{ fontSize: 7.8, color: '#cbd5e1' }}>{stg.timestamp}</div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Active Replay Stage Visual Frame & Explanation */}
+          {currentReplayFrame && (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '140px 1fr',
+                gap: 10,
+                padding: '7px 8px',
+                background: 'rgba(15, 23, 42, 0.88)',
+                border: `1px solid ${currentReplayFrame.in_zone ? '#ef4444' : '#38bdf8'}`,
+                borderRadius: 4,
+                fontSize: 8.5,
+              }}
+            >
+              <img
+                src={currentReplayFrame.snapshot_url || currentReplayFrame.demo_fallback_url || '/demo/incidents/cam03_event_intrusion.jpg'}
+                alt={currentReplayFrame.stage}
+                style={{ width: '100%', height: 82, objectFit: 'cover', borderRadius: 3, border: '1px solid rgba(255,255,255,0.15)' }}
+              />
+              <div>
+                <div style={{ color: currentReplayFrame.in_zone ? '#ef4444' : '#38bdf8', fontWeight: 800, fontSize: 9.2, marginBottom: 3 }}>
+                  [{currentReplayFrame.stage}] {currentReplayFrame.title}
+                </div>
+                <div style={{ color: '#e2e8f0', marginBottom: 4 }}>
+                  {currentReplayFrame.description}
+                </div>
+                <div style={{ color: '#94a3b8', fontSize: 8 }}>
+                  Camera: <strong style={{ color: '#00f0ff' }}>{currentReplayFrame.camera_id || 'CAM-03'}</strong> | YOLOv8 Confidence: <strong style={{ color: '#10b981' }}>{currentReplayFrame.confidence || 92}%</strong> | Zone Status: <strong style={{ color: currentReplayFrame.in_zone ? '#ef4444' : '#10b981' }}>{currentReplayFrame.in_zone ? 'INSIDE BUNKER ZONE' : 'APPROACHING PERIMETER'}</strong>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Complete 3-Step Replay Timeline Summary */}
+          <div style={{ marginTop: 7, display: 'flex', flexDirection: 'column', gap: 3, fontSize: 8 }}>
+            <div style={{ color: '#38bdf8' }}>• <strong>14:18:10</strong> — Person outside bunker zone (BEFORE EVENT)</div>
+            <div style={{ color: '#ef4444' }}>• <strong>14:18:18</strong> — Person enters bunker zone → PROTECTED-AREA INTRUSION (EVENT)</div>
+            <div style={{ color: '#fbbf24' }}>• <strong>14:18:22</strong> — Alert + snapshot saved; correlated CAM-04 approach (AFTER EVENT)</div>
+          </div>
         </div>
       </div>
 
@@ -2222,7 +3246,7 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
               ⬡ IBVAP INCIDENT FUSION & EXPLAINABLE AI
             </span>
             <span style={{ fontSize: 9, color: affectedCams.length >= 2 ? '#ef4444' : '#38bdf8', fontWeight: 700 }}>
-              {affectedCams.length >= 2 ? 'MULTI-CAMERA SECURITY ALERT' : 'CORRELATION ENGINE ARMED'}
+              {affectedCams.length >= 2 ? 'POSSIBLE CROSS-CAMERA EVENT' : 'CORRELATION ENGINE ARMED'}
             </span>
           </div>
 
@@ -2263,7 +3287,7 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                 </div>
                 <div style={{ color: '#cbd5e1', fontSize: 8.5, marginBottom: 4 }}>
                   <div><strong>Cameras Involved:</strong> {(inc.cameras_involved || []).join(', ')} | <strong>Normal:</strong> {(inc.normal_cameras || []).join(', ')}</div>
-                  <div><strong>Cross-Camera Track:</strong> <span style={{ color: '#38bdf8' }}>{inc.cross_camera_identity}</span></div>
+                  <div><strong>Correlation:</strong> <span style={{ color: '#38bdf8' }}>{inc.cross_camera_identity || 'POSSIBLE CROSS-CAMERA EVENT'}</span></div>
                 </div>
 
                 {/* Explainable Risk Score Breakdown (Section 9) */}
@@ -2312,7 +3336,7 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                 ))
               ) : (
                 <div style={{ color: '#94a3b8', fontSize: 8.5 }}>
-                  No elevated risk signals active on CAM-01. Click <strong>"🎯 SIH MULTI-CAMERA FUSION DEMO"</strong> above to demonstrate multi-camera event correlation across CAM-01..04.
+                  Click <strong>"🛡 BUNKER &amp; INTRUDER DEMO (CAM-03 / CAM-04)"</strong> above to run the real YOLOv8 bunker intrusion scenario across CAM-03 and CAM-04.
                 </div>
               )}
             </div>
@@ -2341,7 +3365,7 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
           <div style={{ maxHeight: 135, overflowY: 'auto', marginBottom: 8, paddingRight: 4 }}>
             {crossTimeline.length > 0 ? (
               crossTimeline.slice(0, 8).map((step, idx) => {
-                const sColor = step.severity === 'CRITICAL' || step.severity === 'HIGH'
+                const sColor = step.severity === 'CRITICAL' || step.severity === 'HIGH' || step.risk === 'HIGH'
                   ? '#ef4444'
                   : step.severity === 'MEDIUM'
                   ? '#fbbf24'
@@ -2360,7 +3384,7 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                       borderRadius: 2,
                     }}
                   >
-                    <span style={{ color: '#64748b', minWidth: 46 }}>{step.time}</span>
+                    <span style={{ color: '#64748b', minWidth: 46 }}>{step.time || step.timestamp}</span>
                     <strong style={{ color: sColor, minWidth: 46 }}>{step.camera_id}</strong>
                     <span style={{ color: '#e2e8f0' }}>{step.event}</span>
                   </div>

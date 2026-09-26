@@ -60,6 +60,12 @@ class SurveillanceVisionPipeline:
         # 1. Primary Object Detection & Tracking
         self.yolo_detector = YoloDetector(camera_id=camera_id)
         self.tracker = MultiObjectTracker(max_disappeared=25, iou_threshold=0.25)
+        self._trackers: Dict[str, MultiObjectTracker] = {
+            "CAM-01": self.tracker,
+            "CAM-02": MultiObjectTracker(max_disappeared=25, iou_threshold=0.25),
+            "CAM-03": MultiObjectTracker(max_disappeared=25, iou_threshold=0.25),
+            "CAM-04": MultiObjectTracker(max_disappeared=25, iou_threshold=0.25),
+        }
 
         # 2. Upgraded Face Pipeline (YuNet + SFace 128D + SQLite Watchlist)
         self.face_detector = YuNetFaceDetector()
@@ -73,7 +79,7 @@ class SurveillanceVisionPipeline:
         self.plate_ocr = PlateOCR()
 
         # 4. Observable Computer Vision Zone & Event Engine
-        self.zone_analyzer = ZoneAnalyzer()
+        self.zone_analyzer = ZoneAnalyzer(camera_id=camera_id)
         self.event_engine = SurveillanceEventEngine(camera_id=camera_id)
 
         # 5. Optional diagnostic emotion classifier (isolated from primary threat logic)
@@ -81,6 +87,7 @@ class SurveillanceVisionPipeline:
 
         # Cached state for performance throttling on CPU
         self._last_yolo_detections: List[Dict[str, Any]] = []
+        self._last_yolo_by_cam: Dict[str, List[Dict[str, Any]]] = {}
         self._last_face_results: Dict[str, Dict[str, Any]] = {}
         self._last_plate_results: Dict[str, Dict[str, Any]] = {}
 
@@ -97,11 +104,15 @@ class SurveillanceVisionPipeline:
         frame_bgr: np.ndarray,
         confidence_threshold: float = 0.40,
         engine: Optional[str] = None,
-        vehicle_detections: Optional[List[Dict[str, Any]]] = None
+        vehicle_detections: Optional[List[Dict[str, Any]]] = None,
+        camera_id: Optional[str] = None,
+        is_demo: bool = False,
+        scenario_label: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Executes end-to-end multi-object surveillance analysis on a video frame.
         """
+        cam_id = camera_id or self.camera_id
         if frame_bgr is None or frame_bgr.size == 0:
             return self._empty_result(640, 360)
 
@@ -113,20 +124,28 @@ class SurveillanceVisionPipeline:
             return self._empty_result(w, h)
 
         # ── 1. YOLO Object Detection (Every 1-2 frames for smooth CPU latency) ──
-        # On CPU, run YOLO every 2nd frame if latency > 80ms, otherwise every frame
-        run_yolo = (self._frame_count % 2 == 0) or (len(self._last_yolo_detections) == 0)
+        cached_dets = self._last_yolo_by_cam.get(cam_id, [])
+        run_yolo = (cam_id != "CAM-01") or (self._frame_count % 2 == 0) or (len(cached_dets) == 0)
         if run_yolo and self.yolo_detector.is_ready:
             try:
-                self._last_yolo_detections = self.yolo_detector.detect(
+                dets = self.yolo_detector.detect(
                     frame_bgr,
                     confidence_threshold=confidence_threshold,
-                    camera_id=self.camera_id
+                    camera_id=cam_id
                 )
+                self._last_yolo_by_cam[cam_id] = dets
+                if cam_id == self.camera_id:
+                    self._last_yolo_detections = dets
+                cached_dets = dets
             except Exception as e:
                 logger.debug(f"YOLO inference error: {e}")
 
         # ── 2. Multi-Object Tracking (Persons, Vehicles, Objects) ─────────────
-        all_tracks = self.tracker.update(self._last_yolo_detections, (h, w), camera_id=self.camera_id)
+        cam_tracker = self._trackers.get(cam_id)
+        if cam_tracker is None:
+            cam_tracker = MultiObjectTracker(max_disappeared=25, iou_threshold=0.25)
+            self._trackers[cam_id] = cam_tracker
+        all_tracks = cam_tracker.update(cached_dets, (h, w), camera_id=cam_id)
 
         # Separate person, vehicle, and general object tracks
         person_tracks = [t for t in all_tracks if t.get("category") == "person"]
@@ -341,7 +360,9 @@ class SurveillanceVisionPipeline:
                 for o in object_tracks
             ]
         )
-        analyzed_zone_targets = self.zone_analyzer.analyze(combined_for_zone, w, h)
+        analyzed_zone_targets = self.zone_analyzer.analyze(combined_for_zone, w, h, camera_id=cam_id)
+        cam_zone_cfg = self.zone_analyzer.get_zone_for_camera(cam_id)
+        default_zone_label = cam_zone_cfg.get("name", "BORDER ZONE A")
 
         # Map zone telemetry, spatial-temporal relationships, activity inference, behavioral signals, and explainable risk
         zone_lookup = {t.get("target_id"): t for t in analyzed_zone_targets}
@@ -540,9 +561,12 @@ class SurveillanceVisionPipeline:
             zone_move = zinfo.get("movement", pt.get("movement", "STATIONARY"))
             loitering = zinfo.get("loitering", False)
             dwell = zinfo.get("dwell_seconds", pt["dwell_seconds"])
+            z_event = zinfo.get("zone_event")
+            z_name = zinfo.get("zone_name") or default_zone_label
 
             pt["in_restricted_zone"] = in_zone
-            pt["zone_name"] = "BORDER ZONE A [RESTRICTED]" if in_zone else "BORDER ZONE A"
+            pt["zone_name"] = f"{z_name} [PROTECTED]" if in_zone else default_zone_label
+            pt["zone_event"] = z_event
             pt["loitering"] = loitering
             pt["dwell_seconds"] = dwell
 
@@ -572,10 +596,12 @@ class SurveillanceVisionPipeline:
             holding_objs = pt.get("holding_objects", [])
             nearby_objs = pt.get("nearby_objects", [])
             nx, ny, nw, nh = pt.get("normalized_box", [0.5, 0.5, 0.1, 0.2])
-            approaching_zone = (not in_zone) and (0.20 <= nx + nw / 2 <= 0.85) and speed > 14.0 and direction in ("EAST", "SOUTH-EAST", "NORTH-EAST", "SOUTH")
+            approaching_zone = (not in_zone) and (0.15 <= nx + nw / 2 <= 0.85) and (speed > 8.0 or direction in ("EAST", "SOUTH-EAST", "NORTH-EAST", "SOUTH"))
 
             if crossing_fence:
                 activity_label = "CROSSING VIRTUAL FENCE"
+            elif z_event == "PROTECTED_AREA_INTRUSION":
+                activity_label = "PROTECTED-AREA INTRUSION"
             elif zone_move == "ENTERING" or (in_zone and dwell < 3.0):
                 activity_label = "RESTRICTED-ZONE ENTRY"
             elif zone_move == "EXITING":
@@ -587,7 +613,7 @@ class SurveillanceVisionPipeline:
             elif in_zone:
                 activity_label = "INSIDE RESTRICTED ZONE"
             elif approaching_zone:
-                activity_label = "APPROACHING CHECKPOINT / ZONE"
+                activity_label = "APPROACHING RESTRICTED AREA"
             elif multiple_people_gathering and speed < 25.0:
                 activity_label = "MULTIPLE PEOPLE GATHERING"
             elif holding_objs and locomotion in ("WALKING", "RUNNING"):
@@ -826,8 +852,19 @@ class SurveillanceVisionPipeline:
             face_matches=active_face_matches,
             anpr_results=active_anpr_results,
             fence_events=fence_events,
-            camera_id=self.camera_id
+            camera_id=cam_id
         )
+
+        # If processing a demo video/image frame, clearly mark generated alerts as DEMO / SIMULATION
+        for alt in ee_result.get("alerts", []):
+            alt["is_demo"] = is_demo
+            if is_demo:
+                if "[DEMO / SIMULATION]" not in alt.get("title", ""):
+                    alt["title"] = f"{alt.get('title', 'SECURITY EVENT')} [DEMO / SIMULATION]"
+                if scenario_label:
+                    alt["scenario"] = scenario_label
+                if cam_zone_cfg.get("name"):
+                    alt["sector"] = cam_zone_cfg["name"]
 
         # Combine per-person max risk score with event engine threat score
         max_person_risk = max((pt.get("risk_score", 0) for pt in enriched_person_targets), default=0)
@@ -850,7 +887,10 @@ class SurveillanceVisionPipeline:
         # ── 7. Build Unified Telemetry Payload ──────────────────────────────
         yolo_stat = self.yolo_detector.status()
         return {
-            "camera_id": self.camera_id,
+            "camera_id": cam_id,
+            "is_demo": is_demo,
+            "scenario": scenario_label,
+            "protected_zone": cam_zone_cfg,
             "kpis": kpis,
             "targets": enriched_person_targets,
             "vehicles": enriched_vehicle_targets,
@@ -894,9 +934,10 @@ class SurveillanceVisionPipeline:
                 "anpr_events_count": len(active_anpr_results),
                 "objects_count": len(other_objects),
                 "relationships_count": len(relationships),
-                "total_detections": len(self._last_yolo_detections),
+                "total_detections": len(cached_dets),
                 "weapon_detection": yolo_stat.get("weapon_detection", "NOT CONFIGURED"),
                 "custom_object_detection": yolo_stat.get("custom_object_detection", "NOT CONFIGURED"),
+                "structure_detection": yolo_stat.get("structure_detection", "NOT CONFIGURED"),
                 "latency_ms": latency_ms
             }
         }
