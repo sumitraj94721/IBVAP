@@ -366,9 +366,9 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
   const [cameraError, setCameraError] = useState('');
   const [cam1Metrics, setCam1Metrics] = useState(null);
   const [demoMediaStatus, setDemoMediaStatus] = useState({
-    'CAM-02': 'LOADING',
-    'CAM-03': 'LOADING',
-    'CAM-04': 'LOADING',
+    'CAM-02': 'OFFLINE',
+    'CAM-03': 'OFFLINE',
+    'CAM-04': 'OFFLINE',
   });
   const [maximizedCam, setMaximizedCam] = useState(null);
   const [cam2Status, setCam2Status] = useState({
@@ -450,11 +450,11 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
   const [isTriggeringDemo, setIsTriggeringDemo] = useState(false);
   const [isTriggeringBunkerDemo, setIsTriggeringBunkerDemo] = useState(false);
 
-  // CAM-02 (Perimeter Fence Bravo), CAM-03 (Bunker/Outpost), & CAM-04 (Restricted Approach) Demo Media Sources
+  // Secondary cameras remain disconnected until an operator selects a source.
   const [mediaSources, setMediaSources] = useState({
-    'CAM-02': 'DEMO VIDEO',
-    'CAM-03': 'DEMO VIDEO',
-    'CAM-04': 'DEMO VIDEO',
+    'CAM-02': 'OFFLINE',
+    'CAM-03': 'OFFLINE',
+    'CAM-04': 'OFFLINE',
   });
   const mediaSourcesRef = useRef(mediaSources);
   useEffect(() => { mediaSourcesRef.current = mediaSources; }, [mediaSources]);
@@ -503,6 +503,11 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
   const demoTurnRef = useRef(0);
 
   useEffect(() => {
+    if (mediaSources['CAM-02'] !== 'LIVE') {
+      setCam2Status((previous) => ({ ...previous, connected: false, stream_status: 'OFFLINE' }));
+      return undefined;
+    }
+
     let cancelled = false;
     const refreshCam2Status = async () => {
       try {
@@ -520,7 +525,7 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
       cancelled = true;
       clearInterval(statusInterval);
     };
-  }, []);
+  }, [mediaSources['CAM-02']]);
 
   // Keep ref in sync so animation loops see latest mode without stale closure
   useEffect(() => { visionModesRef.current = visionModes; }, [visionModes]);
@@ -975,8 +980,8 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
       const camId = camIds[demoTurnRef.current % camIds.length];
       demoTurnRef.current += 1;
 
-      const srcMode = mediaSourcesRef.current[camId] || 'DEMO VIDEO';
-      if (srcMode === 'SIMULATED FEED' || (camId === 'CAM-02' && srcMode === 'LIVE' && cam2Status.connected)) return;
+      const srcMode = mediaSourcesRef.current[camId] || 'OFFLINE';
+      if (srcMode === 'OFFLINE' || srcMode === 'SIMULATED FEED' || (camId === 'CAM-02' && srcMode === 'LIVE' && cam2Status.connected)) return;
 
       const vidEl = demoVideoRefs[camId]?.current;
       const imgEl = demoImgRefs[camId]?.current;
@@ -1030,8 +1035,8 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
       ['CAM-02', 'CAM-03', 'CAM-04'].forEach((camId) => {
         const canvas = demoOverlayRefs[camId]?.current;
         if (!canvas) return;
-        const srcMode = mediaSourcesRef.current[camId] || 'DEMO VIDEO';
-        if (srcMode === 'SIMULATED FEED') return;
+        const srcMode = mediaSourcesRef.current[camId] || 'OFFLINE';
+        if (srcMode === 'OFFLINE' || srcMode === 'SIMULATED FEED') return;
 
         const cw = canvas.clientWidth || 480;
         const ch = canvas.clientHeight || 270;
@@ -2188,9 +2193,7 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
           const camMode = visionModes[cam.id] || 'DAY';
           const envStatus = getEnvStatus(cam.id, camMode);
           const srcMode = isDemoCam
-            ? (cam.id === 'CAM-02' && cam2Status.connected && !mediaSources['CAM-02_MANUAL']
-                ? 'LIVE'
-                : (mediaSources[cam.id] || 'DEMO VIDEO'))
+            ? (mediaSources[cam.id] || 'OFFLINE')
             : 'LIVE';
           const demoMediaEl = srcMode === 'DEMO VIDEO'
             ? demoVideoRefs[cam.id]?.current
@@ -2225,11 +2228,13 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
             : (cam.eventImageUrl || (cam.id === 'CAM-03' ? '/demo/incidents/cam03_event_intrusion.jpg' : '/demo/incidents/cam04_event_intrusion.jpg'));
           const expandedCameraUrl = isCam1
             ? (cam.url || '/video_feed/cam1')
-            : isDemoCam && srcMode === 'DEMO VIDEO'
+            : srcMode === 'DEMO VIDEO'
               ? demoVideoSrc
-              : isDemoCam && srcMode !== 'LIVE' && srcMode !== 'SIMULATED FEED'
+              : srcMode === 'DEMO IMAGE' || srcMode === 'OUTPOST IMAGE'
                 ? demoImageSrc
-                : cam.url || (cam.id === 'CAM-02' ? '/video_feed/cam2' : '');
+                : srcMode === 'LIVE' && cam.id === 'CAM-02'
+                  ? '/video_feed/cam2'
+                  : '';
 
           return (
             <div
@@ -2248,7 +2253,7 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                 <div className="panel-header-left" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                   <span className="cam-badge">{cam.id}</span>
                   <span className="cam-name">{cam.name}</span>
-                  {isDemoCam && srcMode !== 'LIVE' && (
+                  {isDemoCam && srcMode !== 'LIVE' && srcMode !== 'OFFLINE' && (
                     <span
                       style={{
                         background: 'rgba(251, 191, 36, 0.16)',
@@ -2339,12 +2344,13 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                           }));
                           setDemoMediaStatus((prev) => ({
                             ...prev,
-                            [cam.id]: source === 'SIMULATED FEED' ? 'SIMULATED' : 'LOADING',
+                            [cam.id]: source === 'OFFLINE' ? 'OFFLINE' : source === 'SIMULATED FEED' ? 'SIMULATED' : 'LOADING',
                           }));
                           setCamDemoTelemetry((prev) => ({ ...prev, [cam.id]: null }));
                         }}
                         title={`Select media source for ${cam.id} (${cam.role || 'Border Surveillance Feed'})`}
                       >
+                        <option value="OFFLINE">○ NOT CONNECTED</option>
                         {cam.id === 'CAM-02' && <option value="LIVE">🔴 LIVE STREAM</option>}
                         <option value="DEMO VIDEO">🎬 DEMO VIDEO</option>
                         <option value="DEMO IMAGE">🖼 INTRUDER IMAGE</option>
@@ -2600,6 +2606,10 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                       }}
                     />
                   </div>
+                ) : isDemoCam && srcMode === 'OFFLINE' ? (
+                  <div style={{ display: 'grid', placeItems: 'center', width: '100%', height: '100%', background: '#050b12', color: '#94a3b8', fontFamily: 'var(--font-ui)' }}>
+                    <strong>{cam.id} — OFFLINE / NOT CONNECTED</strong>
+                  </div>
                 ) : cam.id === 'CAM-02' && srcMode === 'LIVE' ? (
                   <div style={{ position: 'relative', width: '100%', height: '100%', background: '#050b12' }}>
                     {cam2Status.connected ? (
@@ -2723,6 +2733,8 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
                         FRAME AGE: <strong>{cam2Status.latency_ms != null ? `${Math.round(cam2Status.latency_ms)}ms` : '--'}</strong>
                       </span>
                     </>
+                  ) : isDemoCam && srcMode === 'OFFLINE' ? (
+                    <span className="status-tag" style={{ marginLeft: 8, color: '#94a3b8' }}>○ OFFLINE / NOT CONNECTED</span>
                   ) : (
                     <>
                       <span className="fps-tag">FPS: --{demoTel?.latencyMs > 0 ? ` | AI ${Number(demoTel.latencyMs).toFixed(0)}ms` : ''}</span>
@@ -3677,7 +3689,9 @@ export default function LiveSurveillanceGrid({ cameras, alerts, onAiUpdate, onOp
           isCameraActive={expandedCam.id === 'CAM-01' ? isCameraActive : false}
           cameraStatus={expandedCam.id === 'CAM-01'
             ? (isCameraActive ? 'LIVE' : cameraError ? 'ERROR' : 'OFFLINE')
-            : expandedCam.id === 'CAM-02' && expandedCam.sourceMode === 'LIVE'
+            : expandedCam.sourceMode === 'OFFLINE'
+              ? 'OFFLINE'
+              : expandedCam.id === 'CAM-02' && expandedCam.sourceMode === 'LIVE'
               ? (cam2Status.connected ? 'LIVE' : cam2Status.stream_status || 'OFFLINE')
               : expandedCam.sourceMode === 'SIMULATED FEED'
                 ? 'SIMULATED'
