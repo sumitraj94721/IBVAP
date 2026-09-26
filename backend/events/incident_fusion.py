@@ -142,6 +142,29 @@ class IBVAPIncidentFusionEngine:
 
         # Bunker / Outpost camera zone status cards (Sections 4 & 5)
         self.bunker_camera_zones: Dict[str, Dict[str, Any]] = {
+            "CAM-02": {
+                "camera_id": "CAM-02",
+                "title": "PERIMETER FENCE BRAVO",
+                "asset_name": "FORWARD GATE ALPHA",
+                "zone_name": "PERIMETER FENCE BRAVO",
+                "zone_type": "RESTRICTED PERIMETER ZONE",
+                "asset_type": "GATE",
+                "status": "SECURE",
+                "persons": 0,
+                "vehicles": 0,
+                "active_events": 0,
+                "ai": "ACTIVE",
+                "last_event": "NONE",
+                "structure_model": "NOT CONFIGURED",
+                "detection_type": "CONFIGURED PROTECTED ZONE (NOT AI OBJECT DETECTION)",
+                "nx": 0.45,
+                "ny": 0.20,
+                "nw": 0.46,
+                "nh": 0.65,
+                "zone_box": {"nx": 0.45, "ny": 0.20, "nw": 0.46, "nh": 0.65},
+                "source_mode": "DEMO VIDEO",
+                "is_demo": True,
+            },
             "CAM-03": {
                 "camera_id": "CAM-03",
                 "title": "BORDER OUTPOST ALPHA",
@@ -294,7 +317,9 @@ class IBVAPIncidentFusionEngine:
         reason: str,
         detected_objects: List[str],
         is_demo: bool = False,
-        force: bool = False
+        force: bool = False,
+        bounding_box: Optional[List[Any]] = None,
+        object_label: str = "PERSON"
     ) -> Optional[Dict[str, Any]]:
         """
         Preserves an incident snapshot frame and structured metadata record
@@ -318,10 +343,34 @@ class IBVAPIncidentFusionEngine:
             if frame_bgr is not None and frame_bgr.size > 0:
                 annotated = frame_bgr.copy()
                 h, w = annotated.shape[:2]
+                # Draw target bounding box on snapshot copy if available
+                if bounding_box and len(bounding_box) >= 4:
+                    if all(float(v) <= 1.0 for v in bounding_box[:4]):
+                        bx1 = int(float(bounding_box[0]) * w)
+                        by1 = int(float(bounding_box[1]) * h)
+                        bx2 = int((float(bounding_box[0]) + float(bounding_box[2])) * w)
+                        by2 = int((float(bounding_box[1]) + float(bounding_box[3])) * h)
+                    else:
+                        bx1 = int(bounding_box[0])
+                        by1 = int(bounding_box[1])
+                        bx2 = int(bounding_box[0] + bounding_box[2])
+                        by2 = int(bounding_box[1] + bounding_box[3])
+                    cv2.rectangle(annotated, (bx1, by1), (bx2, by2), (0, 50, 255), 2)
+                    cv2.putText(
+                        annotated,
+                        f"{object_label} #{track_id} ({confidence:.0f}%)",
+                        (bx1, max(38, by1 - 6)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.45,
+                        (0, 50, 255),
+                        2,
+                        cv2.LINE_AA,
+                    )
                 # Draw clean forensic header bar on copy only (never mutating caller's frame)
                 cv2.rectangle(annotated, (0, 0), (w, 32), (10, 18, 35), -1)
-                banner = f"IBVAP EVIDENCE | {camera_id} | {time_str} | {event_type} | RISK:{risk_score}/100"
-                cv2.putText(annotated, banner, (8, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 240, 255), 1, cv2.LINE_AA)
+                sim_tag = " [DEMO/SIM]" if is_demo else ""
+                banner = f"IBVAP EVIDENCE{sim_tag} | {camera_id} | {time_str} | {event_type} | RISK:{risk_score}/100"
+                cv2.putText(annotated, banner, (8, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 240, 255), 1, cv2.LINE_AA)
                 cv2.imwrite(filepath, annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
             else:
                 snapshot_url = None
@@ -336,7 +385,9 @@ class IBVAPIncidentFusionEngine:
             "timestamp": time_str,
             "timestamp_iso": iso_str,
             "snapshot_url": snapshot_url,
+            "object": object_label,
             "detected_objects": detected_objects,
+            "bounding_box": bounding_box,
             "confidence": round(confidence, 1),
             "track_id": track_id,
             "zone": zone,
@@ -450,6 +501,10 @@ class IBVAPIncidentFusionEngine:
             + [f"{o.get('class_name', 'OBJECT').upper()} {o.get('track_id')}" for o in other_objects]
         )
 
+        primary_intruder = next((t for t in targets if t.get("in_restricted_zone")), targets[0] if targets else None)
+        primary_bbox = (primary_intruder.get("normalized_box") or primary_intruder.get("box")) if primary_intruder else None
+        primary_obj_label = "PERSON" if primary_intruder else ("VEHICLE" if vehicles else "OBJECT")
+
         for alt in alerts:
             sev = alt.get("severity", "INFO")
             # Add to cross-camera timeline
@@ -464,14 +519,16 @@ class IBVAPIncidentFusionEngine:
                 snap = self.save_incident_snapshot(
                     frame_bgr=frame_bgr,
                     camera_id=camera_id,
-                    event_type=alt.get("event_type", "SECURITY_EVENT"),
-                    track_id=alt.get("targetId", "P-001"),
-                    confidence=float(alt.get("confidence", 85.0)),
+                    event_type=alt.get("event_type", "INTRUSION DETECTED"),
+                    track_id=alt.get("targetId", primary_intruder.get("target_id", "P-001") if primary_intruder else "P-001"),
+                    confidence=float(alt.get("confidence", primary_intruder.get("detection_confidence", 85.0) if primary_intruder else 85.0)),
                     zone=alt.get("sector", CAMERA_SECTORS.get(camera_id, "BORDER ZONE A")),
                     risk_score=threat_score,
                     reason=alt.get("description", alt.get("title", "Restricted zone event")),
                     detected_objects=detected_names or ["PERSON"],
                     is_demo=is_demo_frame,
+                    bounding_box=primary_bbox,
+                    object_label=primary_obj_label,
                 )
                 if snap and snap.get("snapshot_url"):
                     alt["snapshot_url"] = snap["snapshot_url"]
@@ -479,6 +536,23 @@ class IBVAPIncidentFusionEngine:
                 # Smart Camera Prioritization on real HIGH/CRITICAL event
                 self.priority_camera = camera_id
                 self.priority_reason = f"{sev} EVENT: {alt.get('title')}"
+
+        # Also preserve evidence snapshot if a zone intrusion is active even when alert cooldown is active
+        if zone_intrusions > 0 and primary_intruder and frame_bgr is not None:
+            self.save_incident_snapshot(
+                frame_bgr=frame_bgr,
+                camera_id=camera_id,
+                event_type="INTRUSION DETECTED",
+                track_id=primary_intruder.get("target_id", "P-001"),
+                confidence=float(primary_intruder.get("detection_confidence", 88.0)),
+                zone=primary_intruder.get("zone_name", CAMERA_SECTORS.get(camera_id, "BORDER ZONE A")),
+                risk_score=threat_score,
+                reason=primary_intruder.get("risk_reason", "Restricted-zone entry"),
+                detected_objects=detected_names or ["PERSON"],
+                is_demo=is_demo_frame,
+                bounding_box=primary_bbox,
+                object_label=primary_obj_label,
+            )
 
         # Check if multiple cameras have active unusual/high-risk events and fuse them
         self._evaluate_multi_camera_correlation(now)
@@ -1313,13 +1387,16 @@ class IBVAPIncidentFusionEngine:
                 cards.append({
                     "camera": cam_id,
                     "subject": f"Person #{pt.get('target_id', 'P-001')} detected.",
-                    "movement": f"{ac.get('activity', pt.get('movement', 'Walking'))} ({pt.get('direction', 'STATIONARY')})",
+                    "movement": f"{ac.get('movement', pt.get('movement', 'WALKING'))} ({pt.get('direction', 'STATIONARY')})",
+                    "event": ac.get("activity", "Monitored presence"),
                     "object": ac.get("object", pt.get("holding_status", "NONE")),
                     "zone": ac.get("location", "Border Zone A (Sector Alpha)"),
-                    "face": ac.get("face_status", pt.get("face_status", "NO FACE VISIBLE")),
-                    "risk": ac.get("risk", pt.get("risk_level", "NORMAL")),
+                    "face": ac.get("face_status", pt.get("face_status", "NOT DETECTED")),
+                    "expression": ac.get("expression_display", "NOT AVAILABLE"),
+                    "risk": ac.get("risk", pt.get("risk_level", "LOW")),
                     "risk_score": ac.get("risk_score", current_analysis.get("threat_score", 10)),
-                    "reason": ac.get("reason", pt.get("risk_reason", "Standard corridor presence.")),
+                    "reason": ac.get("reason", pt.get("risk_reason", "Person detected outside restricted zone.")),
+                    "contributing_signals": ac.get("contributing_signals", []),
                     "behavioral_signals": ac.get("behavioral_signals", []),
                     "time_seen": ac.get("time_seen", time_str),
                     "is_demo": bool(current_analysis.get("is_demo", False)),
@@ -1399,8 +1476,22 @@ class IBVAPIncidentFusionEngine:
         return cards
 
     def get_demo_media_catalog(self) -> Dict[str, Any]:
-        """Returns the catalog of real demo/simulation media assets for CAM-03 and CAM-04."""
+        """Returns the catalog of real demo/simulation media assets for CAM-02, CAM-03, and CAM-04."""
         return {
+            "CAM-02": {
+                "camera_id": "CAM-02",
+                "role": "PERIMETER FENCE BRAVO / GATE CORRIDOR",
+                "asset_name": "FORWARD GATE ALPHA",
+                "zone_name": "PERIMETER FENCE BRAVO",
+                "scenario_label": "SCENARIO: BORDER INTRUSION — SIMULATION",
+                "sources": {
+                    "DEMO VIDEO": "/demo/border/cam04_intrusion_demo.mp4",
+                    "DEMO IMAGE": "/demo/border/cam04_restricted_approach.jpg",
+                    "EVENT IMAGE": "/demo/incidents/cam04_event_intrusion.jpg",
+                    "BEFORE IMAGE": "/demo/incidents/cam04_before_event.jpg",
+                    "AFTER IMAGE": "/demo/incidents/cam04_after_event.jpg",
+                },
+            },
             "CAM-03": {
                 "camera_id": "CAM-03",
                 "role": "BORDER / OUTPOST / BUNKER AREA",

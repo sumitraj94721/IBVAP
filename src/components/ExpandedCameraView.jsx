@@ -38,12 +38,16 @@ function getRiskTag(obj) {
 }
 
 // ─── Object Row component ─────────────────────────────────────────────────
+function formatConfidence(value, digits = 0) {
+  return value != null && Number.isFinite(Number(value)) ? `${Number(value).toFixed(digits)}%` : '--';
+}
+
 function ObjectRow({ obj, onSelect, isSelected }) {
   const tag = getRiskTag(obj);
   const riskColor = getRiskColor(tag.level);
   const name = (obj.class_name || obj.object_type || obj.class || 'OBJECT').toUpperCase();
   const trackId = obj.track_id || obj.target_id || '--';
-  const conf = obj.confidence_pct ?? obj.detection_confidence ?? obj.confidence ?? 0;
+  const conf = obj.confidence_pct ?? obj.detection_confidence ?? obj.confidence;
   return (
     <div
       onClick={() => onSelect(obj)}
@@ -58,7 +62,7 @@ function ObjectRow({ obj, onSelect, isSelected }) {
       <span style={{ width: 7, height: 7, borderRadius: '50%', background: riskColor, flexShrink: 0 }} />
       <span style={{ color: riskColor, fontWeight: 700, fontSize: 10, minWidth: 68 }}>{name}</span>
       <span style={{ color: '#94a3b8', fontSize: 9, minWidth: 46, fontWeight: 600 }}>{trackId}</span>
-      <span style={{ color: '#e2e8f0', fontSize: 9, minWidth: 34 }}>{typeof conf === 'number' ? conf.toFixed(0) : conf}%</span>
+      <span style={{ color: '#e2e8f0', fontSize: 9, minWidth: 34 }}>{formatConfidence(conf)}</span>
       <span style={{ color: riskColor, fontSize: 8, flex: 1, textAlign: 'right', fontWeight: 700 }}>{tag.level}</span>
     </div>
   );
@@ -71,12 +75,15 @@ export default function ExpandedCameraView({
   videoStream = null,
   isCameraActive = false,
   aiTelemetry = null,
+  cameraStatus = 'OFFLINE',
   onClose,
 }) {
   const [selectedObj, setSelectedObj] = useState(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [mediaError, setMediaError] = useState(false);
   const containerRef = useRef(null);
   const expandedVideoRef = useRef(null);
+  const expandedImageRef = useRef(null);
   const expandedCanvasRef = useRef(null);
 
   const targets = aiTelemetry?.targets || [];
@@ -94,8 +101,12 @@ export default function ExpandedCameraView({
   const activeAlerts = (aiTelemetry?.aiAlerts || []).filter(a => a.status === 'ACTIVE');
   const alertCount = activeAlerts.length;
   const activeTracksCount = (aiTelemetry?.tracks || []).length || allObjects.length;
-  const latency = aiTelemetry?.latencyMs || 0;
-  const fpsVal = latency > 0 ? Math.min(30, Math.max(8, Math.round(1000 / Math.max(25, latency)))) : '--';
+  const latency = Number(aiTelemetry?.latencyMs);
+  const latencyValue = Number.isFinite(latency) && latency > 0 ? `${latency.toFixed(0)}ms` : '--';
+  const inputFps = videoStream?.getVideoTracks?.()[0]?.getSettings?.().frameRate;
+  const fpsVal = Number.isFinite(inputFps) && inputFps > 0 ? `${Number(inputFps).toFixed(0)}` : '--';
+  const displayCameraStatus = mediaError ? 'ERROR' : cameraStatus;
+  const isVideoSource = /\.mp4(?:[?#]|$)/i.test(cameraUrl || '');
   const yoloStatus = aiTelemetry?.aiStats?.yolo_status || (aiTelemetry ? 'ONLINE' : 'OFFLINE');
   const yoloModel = aiTelemetry?.aiStats?.yolo_model || 'yolov8n.pt';
   const threatScore = aiTelemetry?.threatScore || 0;
@@ -142,9 +153,19 @@ export default function ExpandedCameraView({
         }
         const ctx = canvas.getContext('2d');
         ctx.clearRect(0, 0, cw, ch);
+        const mediaElement = expandedVideoRef.current || expandedImageRef.current;
+        const mediaWidth = mediaElement?.videoWidth || mediaElement?.naturalWidth || 0;
+        const mediaHeight = mediaElement?.videoHeight || mediaElement?.naturalHeight || 0;
+        const scale = mediaWidth && mediaHeight ? Math.min(cw / mediaWidth, ch / mediaHeight) : 0;
+        const feedWidth = mediaWidth * scale;
+        const feedHeight = mediaHeight * scale;
+        const feedLeft = (cw - feedWidth) / 2;
+        const feedTop = (ch - feedHeight) / 2;
 
-        // 1. Virtual Restricted Zone (ZONE-ALPHA: 30%-80% x, 20%-85% y)
-        const zx = 0.30 * cw, zy = 0.20 * ch, zw = 0.50 * cw, zh = 0.65 * ch;
+        // 1. Virtual Restricted Zone (SECTOR ALPHA: dynamic right-side perimeter)
+        const pz = aiTelemetry?.protectedZone || { nx: 0.66, ny: 0.16, nw: 0.30, nh: 0.68 };
+        const zx = feedLeft + (pz.nx ?? 0.66) * feedWidth, zy = feedTop + (pz.ny ?? 0.16) * feedHeight;
+        const zw = (pz.nw ?? 0.30) * feedWidth, zh = (pz.nh ?? 0.68) * feedHeight;
         ctx.strokeStyle = zoneIntrusions > 0 ? 'rgba(239, 68, 68, 0.75)' : 'rgba(251, 191, 36, 0.35)';
         ctx.lineWidth = 2;
         ctx.setLineDash([8, 5]);
@@ -169,19 +190,21 @@ export default function ExpandedCameraView({
 
         // 3. Draw all detected objects (Persons, Vehicles, General Objects)
         allObjects.forEach((obj) => {
-          const [nx, ny, nw, nh] = obj.normalized_box || [0, 0, 0, 0];
-          const x = nx * cw;
-          const y = ny * ch;
-          const w = nw * cw;
-          const h = nh * ch;
+          const normalizedBox = obj.normalized_box;
+          if (!feedWidth || !feedHeight || !Array.isArray(normalizedBox) || normalizedBox.length < 4 || !normalizedBox.every(Number.isFinite)) return;
+          const [nx, ny, nw, nh] = normalizedBox;
+          const x = feedLeft + nx * feedWidth;
+          const y = feedTop + ny * feedHeight;
+          const w = nw * feedWidth;
+          const h = nh * feedHeight;
           if (w < 4 || h < 4) return;
 
           const tag = getRiskTag(obj);
           const color = getRiskColor(tag.level);
           const name = (obj.class_name || obj.object_type || obj.class || 'OBJECT').toUpperCase();
           const trackId = obj.track_id || obj.target_id || '--';
-          const conf = obj.confidence_pct ?? obj.detection_confidence ?? obj.confidence ?? 0;
-          const confStr = `${typeof conf === 'number' ? conf.toFixed(0) : conf}%`;
+          const conf = obj.confidence_pct ?? obj.detection_confidence ?? obj.confidence;
+          const confStr = conf == null ? '--' : `${Number.isFinite(Number(conf)) ? Number(conf).toFixed(0) : conf}%`;
 
           ctx.fillStyle = obj.in_restricted_zone ? 'rgba(239, 68, 68, 0.14)' : 'rgba(0, 0, 0, 0.15)';
           ctx.fillRect(x, y, w, h);
@@ -196,20 +219,29 @@ export default function ExpandedCameraView({
           // Multi-line label card above bounding box
           const lines = [
             { text: `${name} ${trackId}  [${confStr}]`, color, bold: true },
-            { text: `RISK: ${tag.level}`, color, bold: true },
+            { text: `RISK: ${tag.level}${obj.risk_score != null ? ` (${obj.risk_score}/100)` : ''}`, color, bold: true },
           ];
           if (obj._renderType === 'person') {
-            lines.push({ text: `ACTIVITY: ${obj.activity || obj.movement || 'STANDING'}`, color: '#00f0ff', bold: true });
+            lines.push({ text: `ACTIVITY: ${obj.activity || obj.movement || 'UNAVAILABLE'}`, color: '#00f0ff', bold: true });
             if (obj.holding_status && obj.holding_status !== 'NONE') {
               lines.push({ text: obj.holding_status, color: '#fbbf24', bold: true });
             }
             const fm = obj.face_match;
             if (fm && fm.face_match && fm.display_name && fm.display_name !== 'UNKNOWN') {
-              lines.push({ text: `KNOWN: ${fm.display_name} (${(fm.similarity * 100).toFixed(0)}%)`, color: '#10b981', bold: true });
+              lines.push({ text: `FACE: DETECTED | ${fm.display_name}`, color: '#10b981', bold: true });
             } else if (obj.has_face) {
-              lines.push({ text: 'FACE DETECTED: UNKNOWN', color: '#fbbf24' });
+              lines.push({ text: 'FACE: DETECTED | ID: UNKNOWN', color: '#fbbf24' });
             } else {
-              lines.push({ text: 'FACE: NOT VISIBLE', color: '#94a3b8' });
+              lines.push({ text: 'FACE: NOT DETECTED', color: '#94a3b8' });
+            }
+            const exprObj = obj.emotion || {};
+            const exprRaw = (exprObj.primary_expression || obj.expression || 'NOT AVAILABLE').toString().toUpperCase();
+            const exprConf = exprObj.confidence ?? obj.expression_confidence;
+            if (obj.has_face && exprRaw && exprRaw !== 'NOT AVAILABLE' && exprRaw !== 'UNAVAILABLE') {
+              const expressionConfidence = exprConf != null ? ` (${Number(exprConf).toFixed(0)}%)` : '';
+              lines.push({ text: `EXPRESSION: ${exprRaw}${expressionConfidence}`, color: '#38bdf8', bold: true });
+            } else {
+              lines.push({ text: `EXPRESSION: ${exprRaw || 'NOT AVAILABLE'}`, color: '#64748b' });
             }
           }
           if (obj.plate && obj.plate !== 'N/A') {
@@ -221,7 +253,7 @@ export default function ExpandedCameraView({
 
           const lineH = 15;
           const panelH = lines.length * lineH + 8;
-          const panelW = 225;
+          const panelW = 235;
           const px = Math.min(x, cw - panelW - 4);
           const py = Math.max(panelH + 4, y - 4);
 
@@ -322,8 +354,8 @@ export default function ExpandedCameraView({
           { label: 'ACTIVE TRACKS', value: activeTracksCount, color: '#38bdf8' },
           { label: 'ACTIVE ALERTS', value: alertCount, color: alertCount > 0 ? '#ef4444' : '#10b981' },
           { label: 'INTRUSIONS', value: zoneIntrusions, color: zoneIntrusions > 0 ? '#ef4444' : '#10b981' },
-          { label: 'FPS', value: fpsVal, color: '#10b981' },
-          { label: 'LATENCY', value: `${latency.toFixed ? latency.toFixed(0) : latency}ms`, color: '#e2e8f0' },
+          { label: 'INPUT FPS', value: fpsVal, color: '#10b981' },
+          { label: 'AI LATENCY', value: latencyValue, color: '#e2e8f0' },
         ].map(({ label, value, color }) => (
           <div key={label} style={{
             display: 'flex', flexDirection: 'column', alignItems: 'center',
@@ -353,19 +385,40 @@ export default function ExpandedCameraView({
               autoPlay
               playsInline
               muted
+              onLoadedMetadata={() => setMediaError(false)}
+              onError={() => setMediaError(true)}
               style={{
                 width: '100%',
                 height: '100%',
-                objectFit: 'cover',
+                objectFit: 'contain',
                 transform: 'scaleX(-1)',
               }}
             />
-          ) : (
-            <img
+          ) : isVideoSource ? (
+            <video
+              ref={expandedVideoRef}
               src={cameraUrl}
-              alt={cameraId}
+              autoPlay
+              loop
+              playsInline
+              muted
+              onLoadedMetadata={() => setMediaError(false)}
+              onError={() => setMediaError(true)}
               style={{ width: '100%', height: '100%', objectFit: 'contain' }}
             />
+          ) : cameraUrl ? (
+            <img
+              ref={expandedImageRef}
+              src={cameraUrl}
+              alt={cameraId}
+              onLoad={() => setMediaError(false)}
+              onError={() => setMediaError(true)}
+              style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+            />
+          ) : (
+            <div style={{ display: 'grid', placeItems: 'center', width: '100%', height: '100%', color: '#94a3b8' }}>
+              SOURCE UNAVAILABLE
+            </div>
           )}
 
           {/* Interactive AI Bounding Box Overlay Canvas */}
@@ -386,10 +439,25 @@ export default function ExpandedCameraView({
               const clickY = e.clientY - rect.top;
               const cw = canvas.width;
               const ch = canvas.height;
+              const mediaElement = expandedVideoRef.current || expandedImageRef.current;
+              const mediaWidth = mediaElement?.videoWidth || mediaElement?.naturalWidth || 0;
+              const mediaHeight = mediaElement?.videoHeight || mediaElement?.naturalHeight || 0;
+              const scale = mediaWidth && mediaHeight ? Math.min(cw / mediaWidth, ch / mediaHeight) : 0;
+              const feedWidth = mediaWidth * scale;
+              const feedHeight = mediaHeight * scale;
+              const feedLeft = (cw - feedWidth) / 2;
+              const feedTop = (ch - feedHeight) / 2;
+              if (!feedWidth || !feedHeight || clickX < feedLeft || clickX > feedLeft + feedWidth || clickY < feedTop || clickY > feedTop + feedHeight) {
+                setSelectedObj(null);
+                return;
+              }
+              const sourceX = (clickX - feedLeft) / feedWidth;
+              const sourceY = (clickY - feedTop) / feedHeight;
               for (const obj of allObjects) {
-                const [nx, ny, nw, nh] = obj.normalized_box || [0, 0, 0, 0];
-                const bx = nx * cw, by = ny * ch, bw = nw * cw, bh = nh * ch;
-                if (clickX >= bx && clickX <= bx + bw && clickY >= by && clickY <= by + bh) {
+                const nbox = obj.normalized_box;
+                if (!Array.isArray(nbox) || nbox.length < 4 || !nbox.every(Number.isFinite)) continue;
+                const [nx, ny, nw, nh] = nbox;
+                if (sourceX >= nx && sourceX <= nx + nw && sourceY >= ny && sourceY <= ny + nh) {
                   setSelectedObj(obj);
                   return;
                 }
@@ -397,23 +465,6 @@ export default function ExpandedCameraView({
               setSelectedObj(null);
             }}
           />
-
-          {/* Active Alert Banner Overlay (if any active alert) */}
-          {activeAlerts.length > 0 && (
-            <div style={{
-              position: 'absolute', top: 12, left: 12,
-              background: 'rgba(4,8,20,0.94)', border: '1.5px solid #ef4444',
-              padding: '8px 14px', borderRadius: 4, maxWidth: 420,
-              pointerEvents: 'none',
-            }}>
-              <div style={{ color: '#ef4444', fontWeight: 700, fontSize: 11 }}>
-                ⚠ ACTIVE AI ALERT: {activeAlerts[0].title}
-              </div>
-              <div style={{ color: '#e2e8f0', fontSize: 9, marginTop: 3 }}>
-                Track: {activeAlerts[0].targetId || '--'} | Zone: {activeAlerts[0].sector || 'RESTRICTED'} | {activeAlerts[0].description || ''}
-              </div>
-            </div>
-          )}
 
           {/* AI Status overlay on video bottom */}
           <div style={{
@@ -425,7 +476,7 @@ export default function ExpandedCameraView({
               background: 'rgba(4,8,20,0.90)', border: '1px solid rgba(0,240,255,0.3)',
               padding: '4px 10px', fontSize: 10, color: '#00f0ff',
             }}>
-              {cameraId} | LIVE | AI:{yoloStatus} | MODEL:{yoloModel} | FPS:{fpsVal} | TRACKING:ACTIVE | OBJECTS:{allObjects.length}
+              {cameraId} | {displayCameraStatus} | AI:{yoloStatus} | MODEL:{yoloModel} | INPUT FPS:{fpsVal} | TRACKING:ACTIVE | OBJECTS:{allObjects.length}
             </div>
             <div style={{
               background: zoneIntrusions > 0 ? 'rgba(239,68,68,0.9)' : 'rgba(4,8,20,0.90)',
@@ -434,7 +485,7 @@ export default function ExpandedCameraView({
               color: zoneIntrusions > 0 ? '#fff' : '#10b981',
               fontWeight: 700,
             }}>
-              {zoneIntrusions > 0 ? `⚠ INTRUSIONS: ${zoneIntrusions}` : 'ZONE: CLEAR'}
+              {zoneIntrusions > 0 ? `⚠ INTRUSIONS: ${zoneIntrusions}` : aiTelemetry ? 'ZONE: CLEAR' : 'ZONE: UNAVAILABLE'}
             </div>
           </div>
         </div>
@@ -472,6 +523,20 @@ export default function ExpandedCameraView({
               </div>
             ))}
           </div>
+
+          {activeAlerts.length > 0 && (
+            <div style={{ maxHeight: 150, overflowY: 'auto', padding: '8px 12px', borderBottom: '1px solid #0f172a' }}>
+              <div style={{ color: '#ef4444', fontWeight: 700, fontSize: 10, marginBottom: 5 }}>ACTIVE ALERTS ({activeAlerts.length})</div>
+              {activeAlerts.slice(0, 4).map((alert, index) => (
+                <div key={alert.id || `${alert.timestamp}-${index}`} style={{ padding: '5px 0', borderTop: '1px solid #0f172a', fontSize: 9 }}>
+                  <div style={{ color: '#fca5a5', fontWeight: 700 }}>{alert.title || 'ALERT'}</div>
+                  <div style={{ color: '#94a3b8', marginTop: 2 }}>
+                    {alert.targetId || '--'} | {alert.sector || alert.camera || 'LOCATION UNAVAILABLE'} | {alert.description || ''}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* All Detected Objects List */}
           <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
@@ -524,7 +589,7 @@ export default function ExpandedCameraView({
               {[
                 ['OBJECT', (selectedObj.class_name || selectedObj.object_type || selectedObj.class || 'OBJECT').toUpperCase()],
                 ['TRACK ID', selectedObj.track_id || selectedObj.target_id || '--'],
-                ['CONFIDENCE', `${(selectedObj.confidence_pct ?? selectedObj.detection_confidence ?? selectedObj.confidence ?? 0).toFixed ? (selectedObj.confidence_pct ?? selectedObj.detection_confidence ?? selectedObj.confidence ?? 0).toFixed(1) : '--'}%`],
+                ['CONFIDENCE', formatConfidence(selectedObj.confidence_pct ?? selectedObj.detection_confidence ?? selectedObj.confidence, 1)],
                 ['CAMERA', selectedObj.camera_id || cameraId],
                 ['ACTIVITY', selectedObj.activity || selectedObj.movement || 'MONITORED'],
                 ...(selectedObj.holding_status && selectedObj.holding_status !== 'NONE' ? [['OBJECT RELATION', selectedObj.holding_status]] : []),

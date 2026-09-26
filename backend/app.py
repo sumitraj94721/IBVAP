@@ -159,7 +159,10 @@ async def get_system_status():
             "face_watchlist_count": len(pipeline.face_matcher.list_identities()),
             "anpr_detector": anpr_stat.get("status"),
             "anpr_ocr": ocr_stat.get("status"),
-            "emotion_classifier": "FER+ ResNet Deep Neural Net (ONNX Diagnostic - Non-Threat)"
+            "emotion_classifier": (
+                "FER+ ResNet Deep Neural Net (ONNX Diagnostic - Non-Threat) - "
+                f"{'ONLINE' if pipeline.emotion_classifier.net is not None else 'OFFLINE'}"
+            )
         },
         "tracker": {
             "active_tracks_count": len(pipeline.tracker.tracks),
@@ -579,13 +582,13 @@ async def websocket_video_stream(websocket: WebSocket):
                 image_data = data.get("image", "")
                 conf_thresh = float(data.get("confidence_threshold", 0.40))
                 cam_id = data.get("camera_id", "CAM-01")
-                is_demo = bool(data.get("is_demo", cam_id in ("CAM-03", "CAM-04")))
+                is_demo = bool(data.get("is_demo", cam_id in ("CAM-02", "CAM-03", "CAM-04")))
                 scenario_label = data.get(
                     "scenario_label",
                     "SCENARIO: BORDER INTRUSION — SIMULATION" if is_demo else None
                 )
                 source_mode = data.get("source_mode")
-                if cam_id in ("CAM-03", "CAM-04") and source_mode:
+                if cam_id in ("CAM-02", "CAM-03", "CAM-04") and source_mode:
                     fusion_engine.update_bunker_zone(cam_id, {"source_mode": source_mode, "is_demo": is_demo})
 
                 if not image_data:

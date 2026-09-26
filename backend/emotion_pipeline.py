@@ -13,28 +13,27 @@ from typing import Dict, Any, Tuple, Optional
 
 logger = logging.getLogger("IBVAP.EmotionPipeline")
 
-# Standard emotion classes in FER+
+# Standard emotion classes in FER+ (normalized to supported uppercase labels)
 EMOTION_LABELS = [
-    "Neutral",
-    "Happy",
-    "Surprised",
-    "Sad",
-    "Angry",
-    "Disgust",
-    "Fear",
-    "Contempt"
+    "NEUTRAL",
+    "HAPPY",
+    "SURPRISED",
+    "SAD",
+    "ANGRY",
+    "DISGUSTED",
+    "FEARFUL",
+    "NEUTRAL"  # Contempt mapped to Neutral observation so only supported labels are emitted
 ]
 
-# Threat / Agitation categorizations for tactical surveillance HUD
+# Facial Expression Observations (Diagnostic ONLY — NEVER a security threat by itself)
 THREAT_PROFILES = {
-    "Neutral": {"level": "LOW", "status": "NOMINAL", "color": "#00ff88", "is_threat": False},
-    "Happy": {"level": "LOW", "status": "COOPERATIVE", "color": "#00ff88", "is_threat": False},
-    "Surprised": {"level": "MEDIUM", "status": "ALERTED", "color": "#ffaa00", "is_threat": False},
-    "Sad": {"level": "MEDIUM", "status": "DISTRESSED", "color": "#38bdf8", "is_threat": False},
-    "Contempt": {"level": "MEDIUM", "status": "SUSPICIOUS", "color": "#ffaa00", "is_threat": True},
-    "Angry": {"level": "HIGH", "status": "AGITATED/HOSTILE", "color": "#ff3344", "is_threat": True},
-    "Fear": {"level": "HIGH", "status": "EXTREME STRESS", "color": "#ff3344", "is_threat": True},
-    "Disgust": {"level": "HIGH", "status": "REPULSION/DEFIANCE", "color": "#f43f5e", "is_threat": True}
+    "NEUTRAL": {"level": "LOW", "status": "OBSERVED: NEUTRAL", "color": "#10b981", "is_threat": False},
+    "HAPPY": {"level": "LOW", "status": "OBSERVED: HAPPY", "color": "#10b981", "is_threat": False},
+    "SURPRISED": {"level": "LOW", "status": "OBSERVED: SURPRISED", "color": "#38bdf8", "is_threat": False},
+    "SAD": {"level": "LOW", "status": "OBSERVED: SAD", "color": "#38bdf8", "is_threat": False},
+    "ANGRY": {"level": "LOW", "status": "OBSERVED: ANGRY (NON-THREAT)", "color": "#fbbf24", "is_threat": False},
+    "FEARFUL": {"level": "LOW", "status": "OBSERVED: FEARFUL (NON-THREAT)", "color": "#fbbf24", "is_threat": False},
+    "DISGUSTED": {"level": "LOW", "status": "OBSERVED: DISGUSTED (NON-THREAT)", "color": "#fbbf24", "is_threat": False}
 }
 
 MODEL_URL = "https://github.com/onnx/models/raw/main/validated/vision/body_analysis/emotion_ferplus/model/emotion-ferplus-8.onnx"
@@ -119,8 +118,7 @@ class EmotionClassifier:
                 exp_logits = np.exp(logits - np.max(logits))
                 probs = exp_logits / np.sum(exp_logits)
             else:
-                # Fallback heuristic if ONNX unavailable
-                probs = np.array([0.65, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05], dtype=np.float32)
+                return self._default_result()
 
             # Build probability map
             distribution = {label: float(round(p * 100, 1)) for label, p in zip(EMOTION_LABELS, probs)}
@@ -138,6 +136,7 @@ class EmotionClassifier:
                 "primary_expression": primary_label,
                 "confidence": confidence,
                 "label": f"{primary_label} ({confidence:.0f}%)",
+                "available": True,
                 "threat_profile": threat,
                 "distribution": distribution
             }
@@ -148,9 +147,10 @@ class EmotionClassifier:
 
     def _default_result(self) -> Dict[str, Any]:
         return {
-            "primary_expression": "Neutral",
-            "confidence": 70.0,
-            "label": "Neutral (70%)",
-            "threat_profile": THREAT_PROFILES["Neutral"],
-            "distribution": {label: (70.0 if label == "Neutral" else 4.0) for label in EMOTION_LABELS}
+            "primary_expression": "UNAVAILABLE",
+            "confidence": 0.0,
+            "label": "UNAVAILABLE",
+            "available": False,
+            "threat_profile": {"level": "OFFLINE", "status": "UNAVAILABLE", "color": "#64748b", "is_threat": False},
+            "distribution": {label: 0.0 for label in EMOTION_LABELS}
         }

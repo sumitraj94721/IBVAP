@@ -17,10 +17,10 @@ DEFAULT_ZONE = {
     "name": "SECTOR ALPHA RESTRICTED",
     "zone_type": "RESTRICTED_ZONE",
     "asset_type": "OUTPOST",
-    "nx": 0.30,
-    "ny": 0.20,
-    "nw": 0.50,
-    "nh": 0.65,
+    "nx": 0.66,
+    "ny": 0.16,
+    "nw": 0.30,
+    "nh": 0.68,
 }
 
 DEFAULT_CAMERA_ZONES: Dict[str, Dict[str, Any]] = {

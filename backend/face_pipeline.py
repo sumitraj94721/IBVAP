@@ -88,14 +88,14 @@ class SurveillanceVisionPipeline:
         # Cached state for performance throttling on CPU
         self._last_yolo_detections: List[Dict[str, Any]] = []
         self._last_yolo_by_cam: Dict[str, List[Dict[str, Any]]] = {}
-        self._last_face_results: Dict[str, Dict[str, Any]] = {}
-        self._last_plate_results: Dict[str, Dict[str, Any]] = {}
+        self._last_face_results: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        self._last_plate_results: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
         # Spatial-temporal holding & behavioral tracking state
-        self._holding_history: Dict[Tuple[str, str], int] = {}
-        self._face_stare_start: Dict[str, float] = {}
-        self._last_direction: Dict[str, str] = {}
-        self._direction_reversals: Dict[str, int] = {}
+        self._holding_history: Dict[Tuple[str, str, str], int] = {}
+        self._face_stare_start: Dict[Tuple[str, str], float] = {}
+        self._last_direction: Dict[Tuple[str, str], str] = {}
+        self._direction_reversals: Dict[Tuple[str, str], int] = {}
 
         logger.info("[+] SurveillanceVisionPipeline initialized with real multi-object analytics.")
 
@@ -161,16 +161,35 @@ class SurveillanceVisionPipeline:
             tid = p_trk["track_id"]
             p_box = p_trk["bbox"]
 
-            # Check if we should re-extract face
-            should_detect_face = (self._frame_count % 3 == 0) or (tid not in self._last_face_results)
-            face_info = self._last_face_results.get(tid, None)
+            # Check if we should re-extract face (every 2nd frame or if no face was previously found)
+            face_cache_key = (cam_id, tid)
+            prev_face_info = self._last_face_results.get(face_cache_key, None)
+            should_detect_face = (
+                (self._frame_count % 2 == 0)
+                or (prev_face_info is None)
+                or (not prev_face_info.get("has_face", False))
+            )
+            face_info = prev_face_info
 
             if should_detect_face and self.face_detector.is_ready:
                 # Localize face within person bounding box
                 faces = self.face_detector.detect(frame_bgr, person_box=p_box)
                 if not faces:
-                    # If person bbox didn't catch face, try upper frame region of target
-                    faces = self.face_detector.detect(frame_bgr, person_box=[p_box[0] - 10, p_box[1] - 10, p_box[2] + 20, int(p_box[3] * 0.7)])
+                    # Try expanded upper region of target
+                    faces = self.face_detector.detect(
+                        frame_bgr,
+                        person_box=[p_box[0] - 15, p_box[1] - 15, p_box[2] + 30, int(p_box[3] * 0.75)]
+                    )
+                if not faces:
+                    # Full-frame fallback filtered by person box overlap (handles close-up webcam frames)
+                    all_faces = self.face_detector.detect(frame_bgr)
+                    px1, py1, pw_b, ph_b = p_box
+                    px2, py2 = px1 + pw_b, py1 + ph_b
+                    faces = [
+                        f for f in all_faces
+                        if (px1 - 25 <= f["box"][0] + f["box"][2] / 2 <= px2 + 25)
+                        and (py1 - 25 <= f["box"][1] + f["box"][3] / 2 <= py2 + 25)
+                    ]
 
                 if faces:
                     best_face = max(faces, key=lambda f: f["confidence"])
@@ -178,9 +197,9 @@ class SurveillanceVisionPipeline:
 
                     # Extract 128D embedding & match against watchlist
                     query_emb = self.face_extractor.extract_embedding(frame_bgr, raw_face)
-                    match_result = self.face_matcher.match(query_emb, camera_id=self.camera_id)
+                    match_result = self.face_matcher.match(query_emb, camera_id=cam_id)
 
-                    # Diagnostic emotion check (isolated from security threat)
+                    # Diagnostic facial expression check (isolated from security threat)
                     fx, fy, fw, fh = best_face["box"]
                     face_crop = frame_bgr[max(0, fy):min(h, fy + fh), max(0, fx):min(w, fx + fw)]
                     emotion_res = self.emotion_classifier.analyze(face_crop)
@@ -193,7 +212,7 @@ class SurveillanceVisionPipeline:
                         "match": match_result,
                         "emotion": emotion_res
                     }
-                    self._last_face_results[tid] = face_info
+                    self._last_face_results[face_cache_key] = face_info
                 else:
                     face_info = {
                         "has_face": False,
@@ -202,25 +221,26 @@ class SurveillanceVisionPipeline:
                         "landmarks": [],
                         "match": {
                             "face_match": False,
-                            "status": "UNKNOWN PERSON",
+                            "status": "NO MATCH",
                             "person_code": None,
                             "display_name": "UNKNOWN",
                             "similarity": 0.0
                         },
                         "emotion": {
-                            "primary_expression": "Neutral",
-                            "confidence": 60.0
+                            "primary_expression": "NOT AVAILABLE",
+                            "confidence": 0.0,
+                            "available": False
                         }
                     }
-                    self._last_face_results[tid] = face_info
+                    self._last_face_results[face_cache_key] = face_info
 
             # Fallback if no face info
             if face_info is None:
                 face_info = {
                     "has_face": False,
                     "landmarks": [],
-                    "match": {"face_match": False, "status": "UNKNOWN PERSON", "person_code": None, "display_name": "UNKNOWN", "similarity": 0.0},
-                    "emotion": {"primary_expression": "Neutral", "confidence": 50.0}
+                    "match": {"face_match": False, "status": "NO MATCH", "person_code": None, "display_name": "UNKNOWN", "similarity": 0.0},
+                    "emotion": {"primary_expression": "NOT AVAILABLE", "confidence": 0.0, "available": False}
                 }
 
             if face_info["match"].get("face_match"):
@@ -229,20 +249,27 @@ class SurveillanceVisionPipeline:
             # Build enriched person target dictionary for HUD and dashboard
             disp_name = face_info["match"].get("display_name")
             has_face = bool(face_info.get("has_face", False))
+            emotion_data = face_info.get("emotion", {"primary_expression": "NOT AVAILABLE", "confidence": 0.0, "available": False})
+            expr_label = emotion_data.get("primary_expression", "NOT AVAILABLE").upper() if has_face else "NOT AVAILABLE"
+            expr_conf = float(emotion_data.get("confidence", 0.0)) if has_face else 0.0
+
             if disp_name and disp_name != "UNKNOWN":
-                hud_name = f"KNOWN: {disp_name} ({face_info['match'].get('similarity', 0)*100:.0f}%)"
-                face_status = "KNOWN"
+                hud_name = f"KNOWN PERSON: {disp_name} ({face_info['match'].get('similarity', 0)*100:.0f}%)"
+                face_status = "DETECTED"
+                identity_status = f"KNOWN PERSON ({disp_name})"
             elif has_face:
-                hud_name = "FACE DETECTED: UNKNOWN"
-                face_status = "FACE DETECTED / UNKNOWN"
+                hud_name = "FACE: DETECTED (UNKNOWN PERSON)"
+                face_status = "DETECTED"
+                identity_status = face_info["match"].get("status", "UNKNOWN PERSON")
             else:
-                hud_name = "FACE: NOT VISIBLE"
-                face_status = "NO FACE VISIBLE"
+                hud_name = "FACE: NOT DETECTED"
+                face_status = "NOT DETECTED"
+                identity_status = "NO MATCH"
 
             p_trk_enriched = {
                 "target_id": tid,
                 "track_id": tid,
-                "camera_id": self.camera_id,
+                "camera_id": cam_id,
                 "box": p_box,
                 "bbox": p_box,
                 "normalized_box": p_trk["normalized_box"],
@@ -260,9 +287,12 @@ class SurveillanceVisionPipeline:
                 "last_seen": p_trk["last_seen"],
                 "has_face": has_face,
                 "face_status": face_status,
+                "identity_status": identity_status,
                 "face_match": face_info["match"],
                 "landmarks": face_info.get("landmarks", []),
-                "emotion": face_info.get("emotion", {"primary_expression": "Neutral", "confidence": 50.0}),
+                "emotion": emotion_data,
+                "expression": expr_label,
+                "expression_confidence": round(expr_conf, 1),
                 "hud_label": f"PERSON {tid} [{p_trk['confidence_pct']:.0f}%] | {p_trk['direction']}",
                 "hud_name": hud_name,
             }
@@ -278,8 +308,9 @@ class SurveillanceVisionPipeline:
             v_box = v_trk["bbox"]
             v_class = v_trk.get("class_name", "car").upper()
 
-            should_scan_plate = (self._frame_count % 4 == 0) or (v_tid not in self._last_plate_results)
-            plate_info = self._last_plate_results.get(v_tid, None)
+            plate_cache_key = (cam_id, v_tid)
+            should_scan_plate = (self._frame_count % 4 == 0) or (plate_cache_key not in self._last_plate_results)
+            plate_info = self._last_plate_results.get(plate_cache_key, None)
 
             if should_scan_plate:
                 plate_candidates = self.plate_detector.detect_plates(frame_bgr, vehicle_box=v_box)
@@ -293,7 +324,7 @@ class SurveillanceVisionPipeline:
                             **val_res,
                             "vehicle_track_id": v_tid,
                             "bbox": cand["bbox"],
-                            "camera_id": self.camera_id
+                            "camera_id": cam_id
                         }
                         active_anpr_results.append(plate_read)
                         break
@@ -308,7 +339,7 @@ class SurveillanceVisionPipeline:
                         "status": "STANDBY",
                         "confidence": 0.0
                     }
-                self._last_plate_results[v_tid] = plate_info
+                self._last_plate_results[plate_cache_key] = plate_info
 
             if plate_info is None:
                 plate_info = {"is_valid": False, "plate_text": "N/A", "formatted_plate": "N/A", "confidence": 0.0}
@@ -457,7 +488,7 @@ class SurveillanceVisionPipeline:
                 dist = float(np.hypot(pcx - ocx, pcy - ocy))
                 norm_dist = dist / max(40.0, float(max(pw, ph)))
 
-                pair_key = (ptid, otid)
+                pair_key = (cam_id, ptid, otid)
                 active_pair_keys.add(pair_key)
 
                 # Check spatial criteria for holding/carrying
@@ -545,7 +576,7 @@ class SurveillanceVisionPipeline:
 
         # Prune stale holding history pairs
         for pk in list(self._holding_history.keys()):
-            if pk not in active_pair_keys:
+            if pk[0] == cam_id and pk not in active_pair_keys:
                 self._holding_history[pk] = max(0, self._holding_history[pk] - 1)
                 if self._holding_history[pk] == 0:
                     del self._holding_history[pk]
@@ -637,10 +668,11 @@ class SurveillanceVisionPipeline:
             behavioral_signals: List[Dict[str, Any]] = []
 
             # Track continuous camera/checkpoint observation duration
+            track_key = (cam_id, tid)
             if pt.get("has_face") and speed < 20.0:
-                if tid not in self._face_stare_start:
-                    self._face_stare_start[tid] = now_epoch
-                stare_dur = now_epoch - self._face_stare_start[tid]
+                if track_key not in self._face_stare_start:
+                    self._face_stare_start[track_key] = now_epoch
+                stare_dur = now_epoch - self._face_stare_start[track_key]
                 if stare_dur >= 6.0:
                     behavioral_signals.append({
                         "signal": f"Prolonged observation toward camera/checkpoint ({stare_dur:.0f}s)",
@@ -648,7 +680,7 @@ class SurveillanceVisionPipeline:
                         "note": "Observable gaze duration — NOT a confirmed threat"
                     })
             else:
-                self._face_stare_start.pop(tid, None)
+                self._face_stare_start.pop(track_key, None)
 
             # Head orientation asymmetry from facial landmarks
             landmarks = pt.get("landmarks", [])
@@ -667,12 +699,12 @@ class SurveillanceVisionPipeline:
                     pass
 
             # Track direction reversals (approach/retreat behavior)
-            prev_dir = self._last_direction.get(tid)
+            prev_dir = self._last_direction.get(track_key)
             if prev_dir and direction != "STATIONARY" and prev_dir != "STATIONARY" and direction != prev_dir:
-                self._direction_reversals[tid] = self._direction_reversals.get(tid, 0) + 1
-            self._last_direction[tid] = direction
+                self._direction_reversals[track_key] = self._direction_reversals.get(track_key, 0) + 1
+            self._last_direction[track_key] = direction
 
-            if self._direction_reversals.get(tid, 0) >= 3:
+            if self._direction_reversals.get(track_key, 0) >= 3:
                 behavioral_signals.append({
                     "signal": "Repeated approach/retreat trajectory changes",
                     "confidence": "MEDIUM",
@@ -693,43 +725,60 @@ class SurveillanceVisionPipeline:
                     "note": "Extended stationary presence"
                 })
 
-            # Facial expression (Diagnostic ONLY — NEVER a threat classifier by itself)
+            # Facial expression (Observation ONLY — NEVER a security threat by itself)
+            has_face_det = bool(pt.get("has_face", False))
             emotion_obj = pt.get("emotion", {})
-            expr_name = (emotion_obj.get("primary_expression") or "Neutral").upper()
-            expr_conf = float(emotion_obj.get("confidence", 60.0))
+            expr_name = (emotion_obj.get("primary_expression") or "NOT AVAILABLE").upper() if has_face_det else "NOT AVAILABLE"
+            expr_conf = float(emotion_obj.get("confidence", 0.0)) if has_face_det else 0.0
 
-            # 5. Explainable Risk Engine (0 - 100)
-            risk_score = 10  # Baseline monitored presence
-            contributing_signals = []
+            # 5. Explainable Risk Engine (0 - 100) — Dynamic from actual observable signals
+            base_presence_pts = int(round(8 + min(5.0, float(pt.get("detection_confidence", 80.0)) / 22.0)))
+            risk_score = base_presence_pts
+            contributing_signals = [
+                {
+                    "signal": "Person detected in restricted zone" if in_zone else "Person detected outside restricted zone",
+                    "points": base_presence_pts,
+                }
+            ]
             reasons = []
 
             if in_zone:
-                risk_score += 45
-                contributing_signals.append({"signal": "Restricted zone entry", "points": 45})
-                reasons.append("Person entered restricted zone")
+                zone_entry_pts = 48
+                risk_score += zone_entry_pts
+                contributing_signals.append({"signal": f"Restricted-zone entry ({z_name})", "points": zone_entry_pts})
+                reasons.append(f"Restricted-zone entry ({z_name})")
 
-            if loitering or dwell >= 15.0:
-                pts = 22 if in_zone else 15
-                risk_score += pts
-                contributing_signals.append({"signal": f"Prolonged presence ({dwell:.0f}s)", "points": pts})
-                reasons.append(f"Person remained in monitored area for {dwell:.0f} seconds")
-            elif dwell >= 8.0 and in_zone:
-                risk_score += 10
-                contributing_signals.append({"signal": f"Dwell inside restricted zone ({dwell:.0f}s)", "points": 10})
-                reasons.append(f"Person remained inside restricted zone for {dwell:.0f} seconds")
+                if dwell >= 2.0:
+                    dwell_zone_pts = min(26, max(2, int(round(dwell * 1.35))))
+                    risk_score += dwell_zone_pts
+                    contributing_signals.append({"signal": f"Prolonged presence in restricted zone ({dwell:.0f}s)", "points": dwell_zone_pts})
+                    reasons.append(f"Sustained presence inside restricted zone ({dwell:.0f}s)")
+
+                if multiple_people_gathering:
+                    risk_score += 15
+                    contributing_signals.append({"signal": f"Multiple-person intrusion ({len(enriched_person_targets)} persons)", "points": 15})
+                    reasons.append(f"Multiple-person intrusion ({len(enriched_person_targets)} persons)")
+            else:
+                # Outside restricted zone: only flag prolonged presence after 25s
+                if dwell >= 25.0:
+                    prolonged_pts = min(22, int(round(10 + (dwell - 25.0) * 0.6)))
+                    risk_score += prolonged_pts
+                    contributing_signals.append({"signal": f"Prolonged presence in monitored area ({dwell:.0f}s)", "points": prolonged_pts})
+                    reasons.append(f"Prolonged presence in monitored area ({dwell:.0f}s)")
 
             if crossing_fence:
                 risk_score += 25
                 contributing_signals.append({"signal": "Virtual fence crossing", "points": 25})
-                reasons.append("Person crossed virtual zero-line fence boundary")
-            elif approaching_zone:
+                reasons.append("Virtual fence boundary crossed")
+            elif approaching_zone and not in_zone:
                 risk_score += 12
-                contributing_signals.append({"signal": "Approaching restricted checkpoint", "points": 12})
-                reasons.append("Person moving toward protected boundary")
+                contributing_signals.append({"signal": "Approaching restricted boundary", "points": 12})
+                reasons.append("Approaching restricted boundary")
 
             if speed > 135.0:
-                risk_score += 15
-                contributing_signals.append({"signal": "Unusual rapid movement", "points": 15})
+                vel_pts = min(20, int(round(12 + (speed - 135.0) / 25.0)))
+                risk_score += vel_pts
+                contributing_signals.append({"signal": f"Unusual rapid movement ({speed:.0f} px/s)", "points": vel_pts})
                 reasons.append(f"Unusual rapid movement ({speed:.0f} px/s)")
 
             if pt.get("nearby_vehicles"):
@@ -739,7 +788,7 @@ class SurveillanceVisionPipeline:
 
             if holding_objs and any(h["class_name"] in ("BACKPACK", "SUITCASE", "HANDBAG") for h in holding_objs) and in_zone:
                 risk_score += 10
-                contributing_signals.append({"signal": "Carrying baggage in restricted zone", "points": 10})
+                contributing_signals.append({"signal": f"Carrying {holding_objs[0]['class_name']} in restricted zone", "points": 10})
                 reasons.append(f"Carrying {holding_objs[0]['class_name']} inside restricted zone")
 
             if pt.get("face_match", {}).get("face_match") and pt["face_match"].get("identity_status") == "WATCHLIST":
@@ -747,55 +796,62 @@ class SurveillanceVisionPipeline:
                 contributing_signals.append({"signal": "Enrolled watchlist facial match", "points": 35})
                 reasons.append(f"Matched enrolled watchlist subject ({pt['face_match'].get('display_name')})")
 
-            # Expression NEVER increases risk alone — only when combined with restricted zone + behavioral signal
-            if expr_name in ("ANGRY", "FEAR") and in_zone and len(behavioral_signals) > 0:
+            # Expression NEVER increases risk alone — only when combined with restricted zone + unusual movement/behavior
+            if has_face_det and expr_name in ("ANGRY", "FEARFUL", "DISGUSTED") and in_zone and (speed > 135.0 or len(behavioral_signals) > 0):
                 risk_score += 5
                 contributing_signals.append({
-                    "signal": f"{expr_name} expression + unusual behavior + restricted zone (Combined contextual signal)",
+                    "signal": f"{expr_name} expression + restricted-zone entry + unusual movement",
                     "points": 5
                 })
-                reasons.append(f"Combined signal: {expr_name} expression with unusual behavior inside restricted zone")
+                reasons.append(f"Combined signal: {expr_name} expression + restricted-zone entry + unusual movement")
 
             risk_score = min(100, max(5, risk_score))
 
-            if risk_score >= 75:
+            if risk_score >= 78:
                 pt["risk_level"] = "CRITICAL"
                 card_status = "HIGH RISK"
-                primary_reason = reasons[0].upper() if reasons else "CRITICAL RESTRICTED-ZONE BREACH"
-            elif risk_score >= 50 or in_zone:
+                primary_reason = reasons[0] if reasons else "Restricted-zone crossing"
+            elif risk_score >= 52 or in_zone:
                 pt["risk_level"] = "HIGH RISK"
                 card_status = "HIGH RISK"
-                primary_reason = "RESTRICTED-ZONE ENTRY" if in_zone else (reasons[0].upper() if reasons else "HIGH RISK ACTIVITY")
-            elif risk_score >= 28:
+                primary_reason = reasons[0] if reasons else "Restricted-zone entry"
+            elif risk_score >= 26:
                 pt["risk_level"] = "MEDIUM"
                 card_status = "MONITORED"
-                primary_reason = reasons[0].upper() if reasons else "PROLONGED / UNUSUAL MOVEMENT"
+                primary_reason = reasons[0] if reasons else "Prolonged presence in monitored area"
             else:
-                pt["risk_level"] = "NORMAL"
+                pt["risk_level"] = "LOW"
                 card_status = "MONITORED"
-                primary_reason = "STANDARD CORRIDOR PRESENCE"
+                primary_reason = "Person detected outside restricted zone (No security event detected)"
 
             pt["risk_score"] = risk_score
             pt["risk_reason"] = primary_reason
             pt["contributing_signals"] = contributing_signals
-            pt["reasons"] = [f"{i+1}. {r}" for i, r in enumerate(reasons)] if reasons else ["1. Routine monitored presence in border corridor (No threat signals)"]
+            pt["reasons"] = [f"{i+1}. {r}" for i, r in enumerate(reasons)] if reasons else ["1. Person detected outside restricted zone — No significant security indicators detected."]
             pt["behavioral_signals"] = behavioral_signals
 
-            # Honest facial status formatting for Person Activity Card
+            # Honest facial status formatting for Person Information Panel
             fm = pt.get("face_match", {})
             if fm.get("face_match") and fm.get("display_name") and fm.get("display_name") != "UNKNOWN":
-                face_card_status = f"FACE DETECTED | KNOWN PERSON ({fm.get('display_name')})"
-            elif pt.get("has_face"):
-                face_card_status = "FACE DETECTED | UNKNOWN PERSON (NO MATCH)"
+                face_card_status = f"DETECTED | KNOWN PERSON ({fm.get('display_name')})"
+            elif has_face_det:
+                face_card_status = f"DETECTED | {fm.get('status', 'UNKNOWN PERSON')}"
             else:
-                face_card_status = "NO FACE DETECTED"
+                face_card_status = "NOT DETECTED | NO MATCH"
 
-            # Build structured PERSON ACTIVITY CARD (Requirement 5)
+            expression_display = (
+                f"{expr_name} ({expr_conf:.0f}%)"
+                if has_face_det and expr_name != "NOT AVAILABLE"
+                else "NOT AVAILABLE"
+            )
+
+            # Build structured PERSON INFORMATION / ACTIVITY CARD (Section 7)
             pt["activity_card"] = {
                 "person_id": f"PERSON #{tid}",
                 "track_id": tid,
                 "status": card_status,
-                "location": "BORDER ZONE A [RESTRICTED]" if in_zone else "BORDER ZONE A",
+                "location": f"{z_name} [RESTRICTED]" if in_zone else default_zone_label,
+                "zone": f"{z_name} [RESTRICTED]" if in_zone else default_zone_label,
                 "movement": locomotion,
                 "direction": direction,
                 "speed": speed_category,
@@ -804,8 +860,17 @@ class SurveillanceVisionPipeline:
                 "activity": activity_label,
                 "time_seen": time_seen_str,
                 "dwell_seconds": round(dwell, 1),
+                "face": "DETECTED" if has_face_det else "NOT DETECTED",
                 "face_status": face_card_status,
-                "expression": f"{expr_name} ({expr_conf:.0f}%) [NON-THREAT DIAGNOSTIC]",
+                "identity_status": pt.get("identity_status", "NO MATCH"),
+                "expression": expr_name,
+                "expression_confidence": round(expr_conf, 1),
+                "expression_display": expression_display,
+                "facial_signal_note": (
+                    f"FACIAL SIGNAL: {expr_name} ({expr_conf:.0f}%) | SECURITY RISK: {pt['risk_level']} ({primary_reason})"
+                    if has_face_det
+                    else "FACE NOT DETECTED"
+                ),
                 "behavioral_signals": behavioral_signals,
                 "risk": pt["risk_level"],
                 "risk_score": risk_score,
