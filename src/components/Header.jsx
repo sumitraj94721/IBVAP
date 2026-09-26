@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-export default function Header({ threatLevel, onLogout, isSirenActive, onToggleSiren }) {
+export default function Header({ threatLevel, onLogout, isSirenActive, onToggleSiren, onLockConsole }) {
   const [timeStr, setTimeStr] = useState('');
   const [dateStr, setDateStr] = useState('');
   const [officerDisplay, setOfficerDisplay] = useState('Admin (BSF-HQ)');
@@ -73,6 +73,16 @@ export default function Header({ threatLevel, onLogout, isSirenActive, onToggleS
         <div className="header-officer-pill">
           <span style={{ color: 'var(--gold-commander)' }}>🎖️</span>
           <span>OFFICER: <strong>{officerDisplay}</strong></span>
+          {onLockConsole && (
+            <button
+              className="btn-header-logout"
+              onClick={onLockConsole}
+              title="Lock Tactical Console"
+              style={{ background: '#172236', borderColor: 'var(--border-subtle)', color: 'var(--cyan-glow)' }}
+            >
+              🔒 LOCK
+            </button>
+          )}
           <button 
             className="btn-header-logout" 
             onClick={onLogout} 

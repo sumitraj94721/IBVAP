@@ -1,546 +1,443 @@
 """
-AI Border Surveillance CCTV Command Center (SIH 26187)
-Face Detection & Persistent Tracking Pipeline
-Supports Deep Learning YuNet DNN & OpenCV Haar Cascade
+IBVAP - Intelligent Border Video Analytics Platform (SIH 26187)
+Unified Multi-Object Surveillance Vision Pipeline
+Connects YOLOv8 Object Detection, Multi-Object Tracking (P-xxx, V-xxx),
+YuNet + SFace Face Recognition, Dedicated ANPR, Zone Analysis, and Observable Event Engine.
 """
 
 import os
-import cv2
-import numpy as np
+import time
 import logging
 from typing import List, Dict, Any, Tuple, Optional
-from collections import OrderedDict
-from backend.emotion_pipeline import EmotionClassifier
-from backend.anpr_face import ANPRFaceProcessor
+
+import cv2
+import numpy as np
+
+from backend.detection.yolo_detector import YoloDetector
+from backend.detection.tracker import MultiObjectTracker
+from backend.face.face_detector import YuNetFaceDetector
+from backend.face.face_embedding import SFaceFeatureExtractor
+from backend.face.face_matcher import FaceMatcher
+from backend.anpr.plate_detector import PlateDetector
+from backend.anpr.ocr import PlateOCR
+from backend.anpr.plate_validator import PlateValidator
 from backend.ai.zone_analyzer import ZoneAnalyzer
+from backend.events.event_engine import SurveillanceEventEngine
+from backend.emotion_pipeline import EmotionClassifier
 
-# Object detector loaded separately (optional — degrades gracefully)
-try:
-    from backend.ai.object_detector import ObjectDetector
-    _OD_AVAILABLE = True
-except ImportError:
-    _OD_AVAILABLE = False
-    logger.warning("[!] ObjectDetector not importable — object detection OFFLINE.")
-
-logger = logging.getLogger("IBVAP.FacePipeline")
-
-DEFAULT_YUNET_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "models", "face_detection_yunet_2023mar.onnx")
-
-
-class FaceTracker:
-    """
-    Centroid and IoU tracker to maintain persistent TARGET IDs (e.g. LOC_#1, LOC_#2)
-    across continuous video frames.
-    """
-
-    def __init__(self, max_disappeared: int = 20, max_distance: float = 100.0):
-        self.next_target_id = 1
-        self.targets = OrderedDict()  # id -> centroid (cx, cy)
-        self.boxes = OrderedDict()    # id -> (x, y, w, h)
-        self.disappeared = OrderedDict() # id -> frame count
-        self.emotions = OrderedDict() # id -> smoothed emotion history
-        self.max_disappeared = max_disappeared
-        self.max_distance = max_distance
-
-    def register(self, centroid: Tuple[int, int], box: Tuple[int, int, int, int]) -> str:
-        target_id = f"LOC_#{self.next_target_id:02d}"
-        self.next_target_id += 1
-        self.targets[target_id] = centroid
-        self.boxes[target_id] = box
-        self.disappeared[target_id] = 0
-        self.emotions[target_id] = []
-        return target_id
-
-    def deregister(self, target_id: str):
-        if target_id in self.targets:
-            del self.targets[target_id]
-        if target_id in self.boxes:
-            del self.boxes[target_id]
-        if target_id in self.disappeared:
-            del self.disappeared[target_id]
-        if target_id in self.emotions:
-            del self.emotions[target_id]
-
-    def update(self, rects: List[Tuple[int, int, int, int]]) -> Dict[int, str]:
-        """
-        Updates active tracks with newly detected bounding boxes.
-        Returns mapping of rect index -> target_id.
-        """
-        rect_to_id = {}
-
-        if len(rects) == 0:
-            for target_id in list(self.disappeared.keys()):
-                self.disappeared[target_id] += 1
-                if self.disappeared[target_id] > self.max_disappeared:
-                    self.deregister(target_id)
-            return rect_to_id
-
-        # Calculate centroids for current input boxes
-        input_centroids = np.zeros((len(rects), 2), dtype="int")
-        for i, (x, y, w, h) in enumerate(rects):
-            input_centroids[i] = (int(x + w / 2.0), int(y + h / 2.0))
-
-        # If no active targets, register all
-        if len(self.targets) == 0:
-            for i in range(len(rects)):
-                tid = self.register(tuple(input_centroids[i]), rects[i])
-                rect_to_id[i] = tid
-            return rect_to_id
-
-        # Match input centroids to existing targets via Euclidean distance
-        target_ids = list(self.targets.keys())
-        target_centroids = np.array(list(self.targets.values()))
-
-        # Compute distance matrix between all pairs of centroids
-        dists = np.linalg.norm(target_centroids[:, np.newaxis] - input_centroids, axis=2)
-
-        rows = dists.min(axis=1).argsort()
-        cols = dists.argmin(axis=1)[rows]
-
-        used_rows = set()
-        used_cols = set()
-
-        for row, col in zip(rows, cols):
-            if row in used_rows or col in used_cols:
-                continue
-
-            if dists[row, col] > self.max_distance:
-                continue
-
-            target_id = target_ids[row]
-            self.targets[target_id] = tuple(input_centroids[col])
-            self.boxes[target_id] = rects[col]
-            self.disappeared[target_id] = 0
-            rect_to_id[col] = target_id
-
-            used_rows.add(row)
-            used_cols.add(col)
-
-        unused_rows = set(range(0, dists.shape[0])).difference(used_rows)
-        unused_cols = set(range(0, dists.shape[1])).difference(used_cols)
-
-        # Increment disappeared counter for unassociated existing targets
-        for row in unused_rows:
-            target_id = target_ids[row]
-            self.disappeared[target_id] += 1
-            if self.disappeared[target_id] > self.max_disappeared:
-                self.deregister(target_id)
-
-        # Register new targets for unassociated input centroids
-        for col in unused_cols:
-            tid = self.register(tuple(input_centroids[col]), rects[col])
-            rect_to_id[col] = tid
-
-        return rect_to_id
-
-
-class FaceDetector:
-    """
-    Multi-engine Face Detector supporting:
-    - YuNet ONNX Deep Neural Network (with 5 facial landmarks)
-    - Haar Cascade frontal face classifier (OpenCV built-in)
-    """
-
-    def __init__(self, engine: str = "yunet", min_confidence: float = 0.5):
-        self.engine = engine.lower()
-        self.min_confidence = min_confidence
-        self.yunet_path = DEFAULT_YUNET_PATH
-        self.yunet_detector = None
-        self.haar_detector = None
-        self.current_input_size = (320, 320)
-
-        self._init_detectors()
-
-    def _init_detectors(self):
-        # 1. Initialize YuNet
-        if os.path.exists(self.yunet_path):
-            try:
-                self.yunet_detector = cv2.FaceDetectorYN.create(
-                    model=self.yunet_path,
-                    config="",
-                    input_size=self.current_input_size,
-                    score_threshold=self.min_confidence,
-                    nms_threshold=0.3,
-                    top_k=50
-                )
-                logger.info("YuNet DNN face detector initialized.")
-            except Exception as e:
-                logger.error(f"Failed to initialize YuNet: {e}")
-                self.yunet_detector = None
-
-        # 2. Initialize Haar Cascade as fallback
-        try:
-            haar_path = os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
-            if os.path.exists(haar_path):
-                self.haar_detector = cv2.CascadeClassifier(haar_path)
-                logger.info("Haar Cascade detector initialized.")
-        except Exception as e:
-            logger.error(f"Failed to initialize Haar Cascade: {e}")
-
-    def set_engine(self, engine: str):
-        if engine.lower() in ["yunet", "haar"]:
-            self.engine = engine.lower()
-
-    def set_confidence_threshold(self, confidence: float):
-        self.min_confidence = confidence
-        if self.yunet_detector:
-            self.yunet_detector.setScoreThreshold(confidence)
-
-    def detect(self, frame_bgr: np.ndarray) -> List[Dict[str, Any]]:
-        """
-        Detect faces in frame.
-        Returns list of dicts:
-            - box: [x, y, w, h]
-            - confidence: float
-            - landmarks: [[x, y], ...] (if YuNet)
-        """
-        h, w = frame_bgr.shape[:2]
-        results = []
-
-        if self.engine == "yunet" and self.yunet_detector is not None:
-            # Dynamically update YuNet input size if frame dimensions changed
-            if self.current_input_size != (w, h):
-                self.current_input_size = (w, h)
-                self.yunet_detector.setInputSize((w, h))
-
-            _, faces = self.yunet_detector.detect(frame_bgr)
-            if faces is not None:
-                for face in faces:
-                    # face format: [x, y, w, h, x_re, y_re, x_le, y_le, x_nt, y_nt, x_rcm, y_rcm, x_lcm, y_lcm, score]
-                    box = [int(face[0]), int(face[1]), int(face[2]), int(face[3])]
-                    # Clamp to image boundaries
-                    box[0] = max(0, box[0])
-                    box[1] = max(0, box[1])
-                    box[2] = min(w - box[0], box[2])
-                    box[3] = min(h - box[1], box[3])
-
-                    score = float(face[14])
-                    if score < self.min_confidence:
-                        continue
-
-                    landmarks = [
-                        [int(face[4]), int(face[5])],   # Right eye
-                        [int(face[6]), int(face[7])],   # Left eye
-                        [int(face[8]), int(face[9])],   # Nose tip
-                        [int(face[10]), int(face[11])], # Right mouth corner
-                        [int(face[12]), int(face[13])]  # Left mouth corner
-                    ]
-
-                    results.append({
-                        "box": box,
-                        "confidence": float(round(score * 100, 1)),
-                        "landmarks": landmarks
-                    })
-            return results
-
-        # Fallback or requested Haar Cascade
-        if self.haar_detector is not None:
-            gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-            # Apply histogram equalization for better contrast
-            gray = cv2.equalizeHist(gray)
-            detected = self.haar_detector.detectMultiScale(
-                gray,
-                scaleFactor=1.15,
-                minNeighbors=5,
-                minSize=(30, 30)
-            )
-            for (x, y, bw, bh) in detected:
-                results.append({
-                    "box": [int(x), int(y), int(bw), int(bh)],
-                    "confidence": 85.0,
-                    "landmarks": []
-                })
-
-        return results
+logger = logging.getLogger("IBVAP.Pipeline")
 
 
 class SurveillanceVisionPipeline:
     """
-    Unified Pipeline connecting:
-    - Video Frame Ingestion
-    - Face Detection (YuNet / Haar)
-    - Persistent Face Tracking (LOC_#1)
-    - Real-time Emotion / Expression Analysis (FER+ ResNet)
-    - Threat Level Evaluation & Alert Generation
+    Unified AI Multi-Object Surveillance Video Analytics Pipeline.
+    
+    Target Pipeline Architecture:
+      LIVE CAMERA INGESTION
+              ↓
+      YOLO OBJECT DETECTION (Ultralytics YOLOv8n)
+              ↓
+     ┌────────┼────────┐
+     ↓        ↓        ↓
+   PERSON   VEHICLE   FACE
+  TRACKING TRACKING  RECOGNITION
+  (P-001)  (V-001)   (SFace 128D)
+     ↓        ↓        ↓
+     └────────┼────────┘
+              ↓
+        EVENT ENGINE (Observable CV threats)
+              ↓
+      ALERT & EVENT LOGGING
+              ↓
+      RAKSHAN COMMAND CENTER
     """
 
-    def __init__(self, engine: str = "yunet"):
-        self.detector = FaceDetector(engine=engine)
-        self.tracker = FaceTracker()
-        self.emotion_classifier = EmotionClassifier()
-        self.edge_processor = ANPRFaceProcessor()
-        self.zone_analyzer = ZoneAnalyzer()
+    def __init__(self, engine: str = "yunet", camera_id: str = "CAM-01"):
+        self.camera_id = camera_id
         self.analytics_enabled = True
         self._frame_count = 0
-        self._last_object_detections: List[Dict[str, Any]] = []
 
-        # Load object detector — non-blocking, degrades gracefully
-        self.object_detector = None
-        if _OD_AVAILABLE:
-            try:
-                self.object_detector = ObjectDetector()
-                logger.info(f"[+] Object detector status: {self.object_detector.status()}")
-            except Exception as e:
-                logger.warning(f"[!] Object detector init failed: {e}")
-        else:
-            logger.warning("[!] Object detection module unavailable.")
+        # 1. Primary Object Detection & Tracking
+        self.yolo_detector = YoloDetector(camera_id=camera_id)
+        self.tracker = MultiObjectTracker(max_disappeared=25, iou_threshold=0.25)
+
+        # 2. Upgraded Face Pipeline (YuNet + SFace 128D + SQLite Watchlist)
+        self.face_detector = YuNetFaceDetector()
+        self.face_extractor = SFaceFeatureExtractor()
+        self.face_matcher = FaceMatcher()
+        # Keep detector reference for backward-compatibility with existing routes
+        self.detector = self.face_detector
+
+        # 3. Dedicated ANPR Pipeline
+        self.plate_detector = PlateDetector()
+        self.plate_ocr = PlateOCR()
+
+        # 4. Observable Computer Vision Zone & Event Engine
+        self.zone_analyzer = ZoneAnalyzer()
+        self.event_engine = SurveillanceEventEngine(camera_id=camera_id)
+
+        # 5. Optional diagnostic emotion classifier (isolated from primary threat logic)
+        self.emotion_classifier = EmotionClassifier()
+
+        # Cached state for performance throttling on CPU
+        self._last_yolo_detections: List[Dict[str, Any]] = []
+        self._last_face_results: Dict[str, Dict[str, Any]] = {}
+        self._last_plate_results: Dict[str, Dict[str, Any]] = {}
+
+        logger.info("[+] SurveillanceVisionPipeline initialized with real multi-object analytics.")
 
     def process_frame(
         self,
         frame_bgr: np.ndarray,
-        confidence_threshold: float = 0.5,
+        confidence_threshold: float = 0.40,
         engine: Optional[str] = None,
         vehicle_detections: Optional[List[Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
-        End-to-end frame analysis (enhanced with object detection, zone analysis, tracking).
-
-        Returns enriched dict with targets, alerts, object detections, zone events, and AI stats.
+        Executes end-to-end multi-object surveillance analysis on a video frame.
         """
+        if frame_bgr is None or frame_bgr.size == 0:
+            return self._empty_result(640, 360)
+
         h, w = frame_bgr.shape[:2]
         self._frame_count += 1
-
-        if engine and engine != self.detector.engine:
-            self.detector.set_engine(engine)
-
-        self.detector.set_confidence_threshold(confidence_threshold)
+        t_start = time.time()
 
         if not self.analytics_enabled:
-            return {
-                "targets": [],
-                "frame_size": {"width": w, "height": h},
-                "alerts": [],
-                "total_faces": 0,
-                "high_threat_count": 0,
-                "faces": [],
-                "vehicles": [],
-                "objects": [],
-                "zone_events": [],
-                "ai_stats": {"object_detector": "DISABLED"},
-            }
+            return self._empty_result(w, h)
 
-        # ── 1. Face Detection ──────────────────────────────────────────────
-        raw_detections = self.detector.detect(frame_bgr)
-        rects = [d["box"] for d in raw_detections]
-        edge_result = self.edge_processor.process(
-            frame_bgr,
-            vehicle_detections=vehicle_detections,
-            face_detections=[
-                {"box": d["box"], "confidence": d["confidence"], "tag": "FACE DETECTED"}
-                for d in raw_detections
-            ],
-        )
-
-        # ── 2. Object Detection (every 3rd frame for CPU performance) ──────
-        if self._frame_count % 3 == 0 and self.object_detector and self.object_detector.is_ready:
+        # ── 1. YOLO Object Detection (Every 1-2 frames for smooth CPU latency) ──
+        # On CPU, run YOLO every 2nd frame if latency > 80ms, otherwise every frame
+        run_yolo = (self._frame_count % 2 == 0) or (len(self._last_yolo_detections) == 0)
+        if run_yolo and self.yolo_detector.is_ready:
             try:
-                all_obj = self.object_detector.detect(frame_bgr, confidence_threshold=0.45)
-                self._last_object_detections = all_obj
+                self._last_yolo_detections = self.yolo_detector.detect(
+                    frame_bgr,
+                    confidence_threshold=confidence_threshold,
+                    camera_id=self.camera_id
+                )
             except Exception as e:
-                logger.debug(f"Object detection frame error: {e}")
+                logger.debug(f"YOLO inference error: {e}")
 
-        all_objects = self._last_object_detections
-        # Separate persons detected by object detector vs faces
-        od_persons = [o for o in all_objects if o["category"] == "person"]
-        od_vehicles = [o for o in all_objects if o["category"] == "vehicle"]
-        od_objects = [o for o in all_objects if o["category"] == "object"]
+        # ── 2. Multi-Object Tracking (Persons & Vehicles) ──────────────────────
+        all_tracks = self.tracker.update(self._last_yolo_detections, (h, w), camera_id=self.camera_id)
 
-        # ── 3. Tracking: Face detections with persistent Target IDs ────────
-        rect_to_id = self.tracker.update(rects)
+        # Separate person and vehicle tracks
+        person_tracks = [t for t in all_tracks if t.get("category") == "person"]
+        vehicle_tracks = [t for t in all_tracks if t.get("category") == "vehicle"]
 
-        targets = []
-        alerts = []
-        high_threat_count = 0
+        # ── 3. Face Recognition on Person Tracks ─────────────────────────────
+        # Only run face recognition on detected person crops every 3rd frame
+        active_face_matches = []
+        enriched_person_targets = []
 
-        # ── 4. Emotion + Age-group for each tracked face ───────────────────
-        for idx, det in enumerate(raw_detections):
-            box = det["box"]
-            target_id = rect_to_id.get(idx, f"LOC_#{idx+1:02d}")
-            x, y, bw, bh = box
+        for p_trk in person_tracks:
+            tid = p_trk["track_id"]
+            p_box = p_trk["bbox"]
 
-            # Crop face with margin padding for expression detection
-            pad_x = int(bw * 0.08)
-            pad_y = int(bh * 0.08)
-            x1 = max(0, x - pad_x)
-            y1 = max(0, y - pad_y)
-            x2 = min(w, x + bw + pad_x)
-            y2 = min(h, y + bh + pad_y)
-            face_roi = frame_bgr[y1:y2, x1:x2]
+            # Check if we should re-extract face
+            should_detect_face = (self._frame_count % 3 == 0) or (tid not in self._last_face_results)
+            face_info = self._last_face_results.get(tid, None)
 
-            # Emotion analysis
-            emotion_res = self.emotion_classifier.analyze(face_roi)
+            if should_detect_face and self.face_detector.is_ready:
+                # Localize face within person bounding box
+                faces = self.face_detector.detect(frame_bgr, person_box=p_box)
+                if not faces:
+                    # If person bbox didn't catch face, try upper frame region of target
+                    faces = self.face_detector.detect(frame_bgr, person_box=[p_box[0] - 10, p_box[1] - 10, p_box[2] + 20, int(p_box[3] * 0.7)])
 
-            threat_profile = emotion_res["threat_profile"]
-            if threat_profile["is_threat"]:
-                high_threat_count += 1
-                alerts.append({
-                    "target_id": target_id,
-                    "expression": emotion_res["primary_expression"],
-                    "confidence": emotion_res["confidence"],
-                    "status": threat_profile["status"],
-                    "level": threat_profile["level"]
-                })
+                if faces:
+                    best_face = max(faces, key=lambda f: f["confidence"])
+                    raw_face = best_face["raw_face"]
 
-            # Age-group heuristic: face bounding box height as proxy
-            # Small face = further away or child; large = adult close-up
-            age_group, age_confidence = _estimate_age_group(bh, bw)
+                    # Extract 128D embedding & match against watchlist
+                    query_emb = self.face_extractor.extract_embedding(frame_bgr, raw_face)
+                    match_result = self.face_matcher.match(query_emb, camera_id=self.camera_id)
 
-            # Object-in-hand: spatial overlap of objects with lower 40% of face bbox body region
-            # We use the face box lower extent to estimate body lower-arm position
-            body_lower_y = y + bh  # Bottom of face
-            body_lower_region = [x - bw, body_lower_y, bw * 3, bh * 2]
-            objects_in_hand = _find_objects_in_hand(od_objects + od_vehicles, body_lower_region, w, h)
+                    # Diagnostic emotion check (isolated from security threat)
+                    fx, fy, fw, fh = best_face["box"]
+                    face_crop = frame_bgr[max(0, fy):min(h, fy + fh), max(0, fx):min(w, fx + fw)]
+                    emotion_res = self.emotion_classifier.analyze(face_crop)
 
-            targets.append({
-                "target_id": target_id,
-                "box": box,
-                "normalized_box": [
-                    round(x / w, 4),
-                    round(y / h, 4),
-                    round(bw / w, 4),
-                    round(bh / h, 4)
-                ],
-                "landmarks": det["landmarks"],
-                "detection_confidence": det["confidence"],
-                "emotion": emotion_res,
-                "age_group": age_group,
-                "age_confidence": age_confidence,
-                "objects_in_hand": objects_in_hand,
+                    face_info = {
+                        "has_face": True,
+                        "face_box": best_face["box"],
+                        "face_confidence": best_face["confidence"],
+                        "landmarks": best_face["landmarks"],
+                        "match": match_result,
+                        "emotion": emotion_res
+                    }
+                    self._last_face_results[tid] = face_info
+                else:
+                    face_info = {
+                        "has_face": False,
+                        "face_box": None,
+                        "face_confidence": 0.0,
+                        "landmarks": [],
+                        "match": {
+                            "face_match": False,
+                            "status": "UNKNOWN PERSON",
+                            "person_code": None,
+                            "display_name": "UNKNOWN",
+                            "similarity": 0.0
+                        },
+                        "emotion": {
+                            "primary_expression": "Neutral",
+                            "confidence": 60.0
+                        }
+                    }
+                    self._last_face_results[tid] = face_info
+
+            # Fallback if no face info
+            if face_info is None:
+                face_info = {
+                    "has_face": False,
+                    "landmarks": [],
+                    "match": {"face_match": False, "status": "UNKNOWN PERSON", "person_code": None, "display_name": "UNKNOWN", "similarity": 0.0},
+                    "emotion": {"primary_expression": "Neutral", "confidence": 50.0}
+                }
+
+            if face_info["match"].get("face_match"):
+                active_face_matches.append(face_info["match"])
+
+            # Build enriched person target dictionary for HUD and dashboard
+            disp_name = face_info["match"].get("display_name")
+            p_trk_enriched = {
+                "target_id": tid,
+                "box": p_box,
+                "normalized_box": p_trk["normalized_box"],
+                "detection_confidence": p_trk["confidence_pct"],
                 "target_type": "person",
+                "class_name": "person",
+                "direction": p_trk["direction"],
+                "movement": p_trk["movement"],
+                "relative_speed": p_trk["relative_speed"],
+                "speed_label": p_trk["speed_label"],
+                "dwell_seconds": p_trk["dwell_seconds"],
+                "face_match": face_info["match"],
+                "landmarks": face_info.get("landmarks", []),
+                "emotion": face_info.get("emotion", {"primary_expression": "Neutral", "confidence": 50.0}),
+                "hud_label": f"PERSON {tid} [{p_trk['confidence_pct']:.0f}%] | {p_trk['direction']}"
+            }
+            if disp_name and disp_name != "UNKNOWN":
+                p_trk_enriched["hud_name"] = f"MATCH: {disp_name} ({face_info['match'].get('similarity', 0)*100:.0f}%)"
+            else:
+                p_trk_enriched["hud_name"] = "UNKNOWN PERSON"
+
+            enriched_person_targets.append(p_trk_enriched)
+
+        # ── 4. Dedicated ANPR on Vehicle Tracks ──────────────────────────────
+        active_anpr_results = []
+        enriched_vehicle_targets = []
+
+        for v_trk in vehicle_tracks:
+            v_tid = v_trk["track_id"]
+            v_box = v_trk["bbox"]
+            v_class = v_trk.get("class_name", "car").upper()
+
+            should_scan_plate = (self._frame_count % 4 == 0) or (v_tid not in self._last_plate_results)
+            plate_info = self._last_plate_results.get(v_tid, None)
+
+            if should_scan_plate:
+                plate_candidates = self.plate_detector.detect_plates(frame_bgr, vehicle_box=v_box)
+                plate_read = None
+
+                for cand in plate_candidates:
+                    ocr_res = self.plate_ocr.read_plate(cand["plate_crop"])
+                    val_res = PlateValidator.validate(ocr_res["text"], ocr_res["confidence"])
+                    if val_res["is_valid"]:
+                        plate_read = {
+                            **val_res,
+                            "vehicle_track_id": v_tid,
+                            "bbox": cand["bbox"],
+                            "camera_id": self.camera_id
+                        }
+                        active_anpr_results.append(plate_read)
+                        break
+
+                if plate_read:
+                    plate_info = plate_read
+                else:
+                    plate_info = {
+                        "is_valid": False,
+                        "plate_text": "N/A",
+                        "formatted_plate": "N/A",
+                        "status": "STANDBY",
+                        "confidence": 0.0
+                    }
+                self._last_plate_results[v_tid] = plate_info
+
+            if plate_info is None:
+                plate_info = {"is_valid": False, "plate_text": "N/A", "formatted_plate": "N/A", "confidence": 0.0}
+
+            enriched_vehicle_targets.append({
+                "track_id": v_tid,
+                "box": v_box,
+                "normalized_box": v_trk["normalized_box"],
+                "object_type": v_class,
+                "confidence": v_trk["confidence_pct"],
+                "plate": plate_info.get("formatted_plate", "N/A"),
+                "plate_valid": plate_info.get("is_valid", False),
+                "direction": v_trk["direction"],
+                "movement": v_trk["movement"],
+                "relative_speed": v_trk["relative_speed"],
+                "speed_label": v_trk["speed_label"],
+                "dwell_seconds": v_trk["dwell_seconds"],
+                "simulated": False,
+                "hud": f"[VEHICLE: {v_class} | {v_tid} | CONF: {v_trk['confidence_pct']:.0f}%]"
             })
 
-        # ── 5. Zone Analysis ───────────────────────────────────────────────
-        enriched_targets = self.zone_analyzer.analyze(targets, w, h)
-
-        # ── 6. Build AI stats payload ──────────────────────────────────────
-        od_status = "OFFLINE"
-        od_model = "N/A"
-        if self.object_detector:
-            od_status = self.object_detector.status()
-            od_model = self.object_detector.model_name
-
-        ai_stats = {
-            "object_detector": od_status,
-            "object_detector_model": od_model,
-            "persons_detected": len(enriched_targets),
-            "od_persons": len(od_persons),
-            "vehicles_detected": len(edge_result["vehicles"]) + len(od_vehicles),
-            "objects_detected": len(od_objects),
-        }
-
-        for face in edge_result["faces"]:
-            face["tag"] = f"FACE DETECTED (CONF: {face.get('confidence', 92):.0f}%)"
-        self.edge_processor.annotate(frame_bgr, edge_result)
-
-        # Merge OD vehicles with edge-detected vehicles
-        all_vehicles = edge_result["vehicles"] + [
+        # ── 5. Zone Analysis on All Active Targets ───────────────────────────
+        # Combine person targets and vehicle targets for restricted zone checking
+        combined_for_zone = enriched_person_targets + [
             {
+                "target_id": v["track_id"],
                 "box": v["box"],
-                "object_type": v["class_name"].upper(),
-                "confidence": v["confidence"],
-                "plate": "N/A",
-                "simulated": False,
-                "hud": f"[VEHICLE: {v['class_name'].upper()} | CONF: {v['confidence']:.0f}%]",
-                "source": "object_detector",
+                "normalized_box": v["normalized_box"],
+                "target_type": "vehicle"
             }
-            for v in od_vehicles
+            for v in enriched_vehicle_targets
+        ]
+        analyzed_zone_targets = self.zone_analyzer.analyze(combined_for_zone, w, h)
+
+        # Map zone telemetry back to person and vehicle tracks
+        zone_lookup = {t.get("target_id"): t for t in analyzed_zone_targets}
+        for pt in enriched_person_targets:
+            zinfo = zone_lookup.get(pt["target_id"], {})
+            pt["in_restricted_zone"] = zinfo.get("in_restricted_zone", False)
+            pt["zone_name"] = zinfo.get("zone_name", "SECTOR ALPHA")
+            pt["loitering"] = zinfo.get("loitering", False)
+            pt["dwell_seconds"] = zinfo.get("dwell_seconds", pt["dwell_seconds"])
+
+        for vt in enriched_vehicle_targets:
+            zinfo = zone_lookup.get(vt["track_id"], {})
+            vt["in_restricted_zone"] = zinfo.get("in_restricted_zone", False)
+            vt["zone_name"] = zinfo.get("zone_name", "SECTOR ALPHA")
+            vt["loitering"] = zinfo.get("loitering", False)
+
+        # ── 6. Observable CV Event Engine Processing ─────────────────────────
+        # Combine person & vehicle tracks with full telemetry for event engine
+        engine_tracks = [
+            {
+                "track_id": pt["target_id"],
+                "category": "person",
+                "class_name": "person",
+                "confidence_pct": pt["detection_confidence"],
+                "in_restricted_zone": pt["in_restricted_zone"],
+                "loitering": pt["loitering"],
+                "dwell_seconds": pt["dwell_seconds"],
+                "direction": pt["direction"],
+                "relative_speed": pt["relative_speed"]
+            }
+            for pt in enriched_person_targets
+        ] + [
+            {
+                "track_id": vt["track_id"],
+                "category": "vehicle",
+                "class_name": vt["object_type"].lower(),
+                "confidence_pct": vt["confidence"],
+                "in_restricted_zone": vt["in_restricted_zone"],
+                "loitering": vt["loitering"],
+                "dwell_seconds": vt["dwell_seconds"],
+                "direction": vt["direction"],
+                "relative_speed": vt["relative_speed"]
+            }
+            for vt in enriched_vehicle_targets
         ]
 
-        return {
-            "targets": enriched_targets,
-            "frame_size": {"width": w, "height": h},
-            "alerts": alerts,
-            "total_faces": len(enriched_targets),
-            "high_threat_count": high_threat_count,
-            "faces": edge_result["faces"],
-            "vehicles": all_vehicles,
-            "objects": od_objects + od_persons,  # all object detections
-            "od_persons": od_persons,
-            "od_vehicles": od_vehicles,
-            "od_objects": od_objects,
-            "ai_stats": ai_stats,
+        ee_result = self.event_engine.process(
+            tracks=engine_tracks,
+            face_matches=active_face_matches,
+            anpr_results=active_anpr_results,
+            camera_id=self.camera_id
+        )
+
+        latency_ms = round((time.time() - t_start) * 1000, 1)
+        fps = round(1000.0 / max(1.0, latency_ms), 1)
+
+        kpis = {
+            "total_persons": len(enriched_person_targets),
+            "active_vehicles": len(enriched_vehicle_targets),
+            "active_tracks": len(all_tracks),
+            "face_matches": len(active_face_matches),
+            "anpr_events": len(active_anpr_results),
+            "active_intrusions": ee_result.get("kpis", {}).get("zone_intrusions", 0),
+            "active_alerts": len(ee_result.get("alerts", [])),
+            "fps": fps
         }
 
+        # ── 7. Build Unified Telemetry Payload ──────────────────────────────
+        return {
+            "camera_id": self.camera_id,
+            "kpis": kpis,
+            "targets": enriched_person_targets,
+            "vehicles": enriched_vehicle_targets,
+            "tracks": all_tracks,
+            "total_faces": len(enriched_person_targets),
+            "face_matches": active_face_matches,
+            "anpr_events": active_anpr_results,
+            "alerts": ee_result.get("alerts", []),
+            "events": ee_result.get("events", []),
+            "ai_alerts": ee_result.get("alerts", []),
+            "ai_events": ee_result.get("events", []),
+            "threat_score": ee_result.get("threat_score", 0),
+            "high_threat_count": sum(1 for a in ee_result.get("alerts", []) if a.get("severity") in ("CRITICAL", "HIGH")),
+            "zone_intrusions": ee_result.get("kpis", {}).get("zone_intrusions", 0),
+            "loitering_count": ee_result.get("kpis", {}).get("loitering_count", 0),
+            "frame_size": {"width": w, "height": h},
+            "analytics_enabled": self.analytics_enabled,
+            "ai_stats": {
+                "yolo_status": self.yolo_detector.status()["status"],
+                "yolo_model": self.yolo_detector.model_path,
+                "yolo_device": self.yolo_detector.device,
+                "face_engine": "YuNet + SFace-128D (ONNX)",
+                "anpr_status": self.plate_detector.status()["status"],
+                "persons_count": len(enriched_person_targets),
+                "vehicles_count": len(enriched_vehicle_targets),
+                "active_tracks": len(all_tracks),
+                "zone_intrusions": ee_result.get("kpis", {}).get("zone_intrusions", 0),
+                "loitering_count": ee_result.get("kpis", {}).get("loitering_count", 0),
+                "face_matches_count": len(active_face_matches),
+                "anpr_events_count": len(active_anpr_results),
+                "latency_ms": latency_ms
+            }
+        }
 
-# ─── Age Group Heuristic ──────────────────────────────────────────────────────
-
-def _estimate_age_group(face_height: int, face_width: int) -> tuple:
-    """
-    Heuristic age-group estimation based on face bounding box dimensions.
-    This is NOT a trained model — it is labeled clearly as ESTIMATED.
-    Only used when a proper age model is unavailable.
-
-    Returns (age_group: str, confidence: float)
-    """
-    # Face height > 100px at typical webcam distance suggests adult close-up
-    # Face height < 50px could be child OR distant adult — mark as UNKNOWN
-    if face_height < 30 or face_width < 25:
-        return "UNKNOWN", 0.0
-    elif face_height < 55:
-        # Small face — too far or possibly young
-        return "UNKNOWN", 30.0
-    elif face_height < 90:
-        # Medium face — likely teen or adult
-        return "ADULT", 55.0
-    else:
-        # Large face close-up — adult
-        return "ADULT", 65.0
-
-
-# ─── Object-in-Hand Spatial Association ──────────────────────────────────────
-
-def _bbox_overlap_fraction(box_a: List[int], box_b: List[int]) -> float:
-    """
-    Returns fraction of box_b that overlaps with box_a.
-    Boxes are [x, y, w, h] pixel format.
-    """
-    ax, ay, aw, ah = box_a
-    bx, by, bw, bh = box_b
-
-    ix1 = max(ax, bx)
-    iy1 = max(ay, by)
-    ix2 = min(ax + aw, bx + bw)
-    iy2 = min(ay + ah, by + bh)
-
-    if ix2 <= ix1 or iy2 <= iy1:
-        return 0.0
-
-    intersection = (ix2 - ix1) * (iy2 - iy1)
-    area_b = bw * bh
-    return intersection / max(area_b, 1)
-
-
-def _find_objects_in_hand(
-    obj_detections: List[Dict[str, Any]],
-    body_lower_region: List[float],
-    frame_w: int,
-    frame_h: int,
-) -> List[Dict[str, Any]]:
-    """
-    Find objects that overlap with the lower body region of a person.
-    This is spatial proximity — not a trained hand-object detector.
-    Labeled as "LIKELY IN HAND" to avoid false certainty.
-    """
-    in_hand = []
-    region = [
-        max(0, int(body_lower_region[0])),
-        max(0, int(body_lower_region[1])),
-        min(frame_w, int(body_lower_region[2])),
-        min(frame_h, int(body_lower_region[3])),
-    ]
-
-    for obj in obj_detections:
-        obj_box = obj.get("box", [])
-        if len(obj_box) < 4:
-            continue
-        overlap = _bbox_overlap_fraction(region, obj_box)
-        if overlap > 0.25:  # At least 25% of object is in hand region
-            in_hand.append({
-                "class_name": obj.get("class_name", "object"),
-                "confidence": obj.get("confidence", 0),
-                "relation": "LIKELY_IN_HAND",
-                "overlap_fraction": round(overlap, 2),
-            })
-
-    return in_hand
-
+    def _empty_result(self, w: int, h: int) -> Dict[str, Any]:
+        return {
+            "camera_id": self.camera_id,
+            "kpis": {
+                "total_persons": 0,
+                "active_vehicles": 0,
+                "active_tracks": 0,
+                "face_matches": 0,
+                "anpr_events": 0,
+                "active_intrusions": 0,
+                "active_alerts": 0,
+                "fps": 0.0
+            },
+            "targets": [],
+            "vehicles": [],
+            "tracks": [],
+            "total_faces": 0,
+            "face_matches": [],
+            "anpr_events": [],
+            "alerts": [],
+            "ai_alerts": [],
+            "ai_events": [],
+            "threat_score": 0,
+            "high_threat_count": 0,
+            "zone_intrusions": 0,
+            "loitering_count": 0,
+            "frame_size": {"width": w, "height": h},
+            "analytics_enabled": self.analytics_enabled,
+            "ai_stats": {
+                "yolo_status": "OFFLINE",
+                "face_engine": "STANDBY",
+                "anpr_status": "STANDBY",
+                "persons_count": 0,
+                "vehicles_count": 0,
+                "active_tracks": 0,
+                "latency_ms": 0.0
+            }
+        }

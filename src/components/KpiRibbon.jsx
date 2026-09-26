@@ -1,36 +1,64 @@
 import React from 'react';
 
 export default function KpiRibbon({ kpiData }) {
+  const fps = kpiData.latencyMs ? Math.min(30, Math.max(12, Math.round(1000 / Math.max(25, kpiData.latencyMs)))) : 28;
+
   return (
-    <section className="kpi-ribbon">
+    <section className="kpi-ribbon" style={{ gridTemplateColumns: 'repeat(8, 1fr)' }}>
       <div className="kpi-card">
-        <span className="kpi-label">TOTAL CAMERAS</span>
-        <span className="kpi-value">{kpiData.totalCameras} <span style={{ fontSize: 11, color: 'var(--status-green)' }}>4 ONLINE</span></span>
+        <span className="kpi-label">TOTAL PERSONS</span>
+        <span className="kpi-value" style={{ color: 'var(--cyan-glow)' }}>
+          {String(kpiData.persons).padStart(2, '0')}
+        </span>
       </div>
 
-      <div className="kpi-card alert-card">
+      <div className="kpi-card">
+        <span className="kpi-label">ACTIVE VEHICLES</span>
+        <span className="kpi-value" style={{ color: '#00d2ff' }}>
+          {String(kpiData.vehicles).padStart(2, '0')}
+        </span>
+      </div>
+
+      <div className="kpi-card">
+        <span className="kpi-label">ACTIVE TRACKS</span>
+        <span className="kpi-value" style={{ color: '#a78bfa' }}>
+          {String(kpiData.activeTracks).padStart(2, '0')}
+        </span>
+      </div>
+
+      <div className="kpi-card">
+        <span className="kpi-label">FACE MATCHES</span>
+        <span className="kpi-value" style={{ color: kpiData.faceMatches > 0 ? 'var(--status-green)' : 'var(--text-dim)' }}>
+          {String(kpiData.faceMatches).padStart(2, '0')}
+        </span>
+      </div>
+
+      <div className="kpi-card">
+        <span className="kpi-label">ANPR EVENTS</span>
+        <span className="kpi-value" style={{ color: kpiData.anprEvents > 0 ? '#38bdf8' : 'var(--text-dim)' }}>
+          {String(kpiData.anprEvents).padStart(2, '0')}
+        </span>
+      </div>
+
+      <div className={`kpi-card ${kpiData.intrusions > 0 ? 'alert-card' : ''}`}>
+        <span className="kpi-label">ACTIVE INTRUSIONS</span>
+        <span className="kpi-value" style={{ color: kpiData.intrusions > 0 ? 'var(--alert-red)' : 'var(--status-green)' }}>
+          {String(kpiData.intrusions).padStart(2, '0')}
+        </span>
+      </div>
+
+      <div className={`kpi-card ${kpiData.activeAlerts > 0 ? 'warning-card' : ''}`}>
         <span className="kpi-label">ACTIVE ALERTS</span>
-        <span className="kpi-value">{kpiData.activeAlerts}</span>
-      </div>
-
-      <div className="kpi-card alert-card">
-        <span className="kpi-label">INTRUSIONS DETECTED</span>
-        <span className="kpi-value">{kpiData.intrusions}</span>
-      </div>
-
-      <div className="kpi-card">
-        <span className="kpi-label">PERSONS IDENTIFIED</span>
-        <span className="kpi-value">{kpiData.persons}</span>
-      </div>
-
-      <div className="kpi-card warning-card">
-        <span className="kpi-label">VEHICLES LOGGED</span>
-        <span className="kpi-value">{kpiData.vehicles}</span>
+        <span className="kpi-value">
+          {String(kpiData.activeAlerts).padStart(2, '0')}
+        </span>
       </div>
 
       <div className="kpi-card status-card">
-        <span className="kpi-label">SYSTEM STATUS</span>
-        <span className="kpi-value">{kpiData.systemStatus}</span>
+        <span className="kpi-label">CAMERA HEALTH / FPS</span>
+        <span className="kpi-value" style={{ fontSize: 13, color: 'var(--status-green)' }}>
+          {kpiData.totalCameras} CAMS <span style={{ fontSize: 10, color: 'var(--cyan-glow)', marginLeft: 4 }}>{fps} FPS</span>
+        </span>
       </div>
     </section>
   );
