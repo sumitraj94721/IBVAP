@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: ibvap-backend
+    runtime: python
+    plan: starter
+    buildCommand: pip install --upgrade pip && pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
+    startCommand: uvicorn backend.app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: IBVAP_ENV
+        value: production
+      - key: IBVAP_AUTH_SECRET
+        generateValue: true
+      - key: IBVAP_ENABLE_DEMO_CREDENTIALS
+        value: "true"
+      - key: IBVAP_ADMIN_USER
+        value: admin
+      - key: IBVAP_ADMIN_PASSWORD
+        value: admin123
+      - key: IBVAP_DATA_DIR
+        value: /tmp/ibvap
+      - key: IBVAP_CORS_ORIGIN_REGEX
+        value: "https://.*\\.vercel\\.app"
