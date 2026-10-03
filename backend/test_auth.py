@@ -22,8 +22,9 @@ assert login_res.status_code == 200, f"Expected 200, got {login_res.status_code}
 login_data = login_res.json()
 officer = login_data.get("officer", {})
 assert officer.get("badge_id") == "BSF-8841"
-assert officer.get("clearance_level") == "Level 2"
-print(f"   PASS: Operator authenticated: {officer.get('name')} ({officer.get('badge_id')}) [{officer.get('clearance_level')}]")
+assert officer.get("clearance_level") == 2
+assert officer.get("clearance_label") == "Level 2"
+print(f"   PASS: Operator authenticated: {officer.get('name')} ({officer.get('badge_id')}) [{officer.get('clearance_label')}]")
 
 print("3. Testing authenticated /api/auth/me via session cookie...")
 me_res = client.get("/api/auth/me")
@@ -70,12 +71,14 @@ latest = inc_list[0]
 print(f"   PASS: Incident logged in SQLite: ID={latest['incident_id']} Officer={latest['officer_name']} Signature={latest['signature_hash']}")
 
 print("7. Testing Commander login (/api/auth/login)...")
-cmd_login = client.post("/api/auth/login", json={"username": "commander", "password": "Secure@2026"})
+cmd_login = client.post("/api/auth/login", json={"username": "commander", "password": "Commander@2026"})
 assert cmd_login.status_code == 200
 cmd_officer = cmd_login.json().get("officer", {})
-assert cmd_officer.get("badge_id") == "HQ-0104"
-assert cmd_officer.get("clearance_level") == "Level 4"
-print(f"   PASS: Commander authenticated: {cmd_officer.get('name')} [{cmd_officer.get('clearance_level')}]")
+assert cmd_officer.get("user_id") == "HQ-CDR-01"
+assert cmd_officer.get("badge_id") == "BSF-0001"
+assert cmd_officer.get("clearance_level") == 4
+assert cmd_officer.get("clearance_label") == "Level 4"
+print(f"   PASS: Commander authenticated: {cmd_officer.get('name')} [{cmd_officer.get('clearance_label')}]")
 
 print("8. Testing Logout (/api/auth/logout)...")
 logout_res = client.post("/api/auth/logout")

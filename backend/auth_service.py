@@ -38,6 +38,28 @@ DEMO_DEFAULT_PASSWORDS = {
 }
 
 
+def normalize_clearance_level(value: Any) -> int:
+    """Accepts DB integers and legacy strings such as 'Level 2' and normalizes to an integer."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text.startswith("level "):
+            text = text[5:].strip()
+        try:
+            return int(float(text))
+        except ValueError:
+            pass
+    return 0
+
+
+def format_clearance_label(value: Any) -> str:
+    """Human-readable security level for API/UI consumption."""
+    return f"Level {normalize_clearance_level(value)}"
+
+
 def get_demo_officer(user_id: str = "") -> Dict[str, Any]:
     """Return the full-privilege identity used by the demo admin."""
     resolved_user_id = user_id.strip() or "admin"
@@ -52,6 +74,7 @@ def get_demo_officer(user_id: str = "") -> Dict[str, Any]:
         "badge": "BSF-8841",
         "badge_id": "BSF-8841",
         "clearance_level": 4,
+        "clearance_label": "Level 4",
         "permissions": ["*"],
         "avatar_url": "tactical_commander_crest",
         "active_shift": "06:00 - 18:00 (Alpha Day Watch)",
@@ -71,10 +94,37 @@ def authenticate_credentials(user_id: str, password: str) -> Optional[Dict[str, 
     if DEMO_BYPASS_AUTH:
         return get_demo_officer(clean_user)
 
-    if not DEMO_CREDENTIALS_ENABLED and DEMO_DEFAULT_PASSWORDS.get(clean_user.lower()) == password:
-        return None
+    lookup_candidates = []
+    for candidate in [clean_user, clean_user.lower(), clean_user.upper()]:
+        if candidate and candidate not in lookup_candidates:
+            lookup_candidates.append(candidate)
+
+    alias_map = {
+        "commander": ["hq-cdr-01"],
+        "hq-cdr-01": ["hq-cdr-01"],
+        "operator": ["operator1"],
+        "op-sect-04": ["op-sect-04"],
+        "operator1": ["operator1"],
+        "admin": ["admin"],
+    }
+    for key, values in alias_map.items():
+        if clean_user.lower() == key:
+            for value in values:
+                if value not in lookup_candidates:
+                    lookup_candidates.append(value)
+
+    # Support legacy role aliases used by older demo scripts while keeping the real seeded IDs authoritative.
+    if clean_user.lower() in {"commander", "hq-cdr-01"}:
+        lookup_candidates.extend(["hq-cdr-01", "commander"])
+    if clean_user.lower() in {"operator", "op-sect-04"}:
+        lookup_candidates.extend(["op-sect-04", "operator"])
+    if clean_user.lower() == "admin":
+        lookup_candidates.extend(["admin"])
+    lookup_candidates = list(dict.fromkeys(lookup_candidates))
 
     # 1. SIH 2026 Primary Demo Credentials: admin / admin123
+    # These are valid only when demo access is explicitly enabled; otherwise,
+    # the database-backed accounts below must be used.
     if clean_user.lower() == "admin" and DEMO_CREDENTIALS_ENABLED:
         if password != "admin123":
             return None
@@ -90,6 +140,7 @@ def authenticate_credentials(user_id: str, password: str) -> Optional[Dict[str, 
             row = cursor.fetchone()
             conn.close()
             if row:
+                level_value = normalize_clearance_level(row["clearance_level"])
                 return {
                     "id": row["id"],
                     "user_id": row["user_id"],
@@ -100,7 +151,8 @@ def authenticate_credentials(user_id: str, password: str) -> Optional[Dict[str, 
                     "role": "ADMIN",
                     "badge": "BSF-8841",
                     "badge_id": "BSF-8841",
-                    "clearance_level": row["clearance_level"],
+                    "clearance_level": level_value,
+                    "clearance_label": format_clearance_label(level_value),
                     "permissions": ["*"],
                     "avatar_url": row["avatar_url"],
                     "active_shift": row["active_shift"],
@@ -114,13 +166,17 @@ def authenticate_credentials(user_id: str, password: str) -> Optional[Dict[str, 
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT id, user_id, password_hash, salt, full_name, rank,
-                   clearance_level, avatar_url, active_shift, assigned_sector
-            FROM operators
-            WHERE LOWER(user_id) = LOWER(?)
-        """, (clean_user,))
-        row = cursor.fetchone()
+        row = None
+        for lookup_user in lookup_candidates:
+            cursor.execute("""
+                SELECT id, user_id, password_hash, salt, full_name, rank,
+                       clearance_level, avatar_url, active_shift, assigned_sector
+                FROM operators
+                WHERE LOWER(user_id) = LOWER(?)
+            """, (lookup_user,))
+            row = cursor.fetchone()
+            if row:
+                break
         conn.close()
 
         if not row:
@@ -130,6 +186,7 @@ def authenticate_credentials(user_id: str, password: str) -> Optional[Dict[str, 
         if not hmac.compare_digest(computed_hash, row["password_hash"]):
             return None
 
+        level_value = normalize_clearance_level(row["clearance_level"])
         return {
             "id": row["id"],
             "user_id": row["user_id"],
@@ -137,11 +194,12 @@ def authenticate_credentials(user_id: str, password: str) -> Optional[Dict[str, 
             "full_name": row["full_name"],
             "name": row["full_name"],
             "rank": row["rank"],
-            "role": "ADMIN" if row["clearance_level"] >= 4 else "OPERATOR",
+            "role": "ADMIN" if level_value >= 4 else "OPERATOR",
             "badge": "BSF-8841" if row["user_id"] == "operator1" else f"BSF-{row['id']:04d}",
             "badge_id": "BSF-8841" if row["user_id"] == "operator1" else f"BSF-{row['id']:04d}",
-            "clearance_level": row["clearance_level"],
-            "permissions": ["*"] if row["clearance_level"] >= 4 else ["SURVEILLANCE", "ALERTS"],
+            "clearance_level": level_value,
+            "clearance_label": format_clearance_label(level_value),
+            "permissions": ["*"] if level_value >= 4 else ["SURVEILLANCE", "ALERTS"],
             "avatar_url": row["avatar_url"],
             "active_shift": row["active_shift"],
             "assigned_sector": row["assigned_sector"]
@@ -153,14 +211,19 @@ def authenticate_credentials(user_id: str, password: str) -> Optional[Dict[str, 
 def create_session_token(operator: Dict[str, Any], remember: bool = False) -> str:
     """Creates a base64-hex HMAC-SHA256 signed session token."""
     duration = REMEMBER_SESSION_DURATION if remember else DEFAULT_SESSION_DURATION
+    clearance_value = normalize_clearance_level(operator.get("clearance_level", 0))
     payload = {
         "id": operator.get("id", 0),
         "user_id": operator["user_id"],
+        "username": operator.get("username", operator["user_id"]),
         "full_name": operator["full_name"],
+        "name": operator.get("name", operator["full_name"]),
         "rank": operator["rank"],
         "role": operator.get("role", "ADMIN"),
-        "badge": operator.get("badge", ""),
-        "clearance_level": operator["clearance_level"],
+        "badge": operator.get("badge", operator.get("badge_id", "")),
+        "badge_id": operator.get("badge_id", operator.get("badge", "")),
+        "clearance_level": clearance_value,
+        "clearance_label": format_clearance_label(clearance_value),
         "permissions": operator.get("permissions", ["*"]),
         "avatar_url": operator.get("avatar_url", ""),
         "assigned_sector": operator["assigned_sector"],

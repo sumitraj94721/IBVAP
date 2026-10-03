@@ -43,6 +43,11 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
 
+    def ensure_column(table: str, column_name: str, column_def: str):
+        columns = [row[1] for row in cursor.execute(f"PRAGMA table_info({table})").fetchall()]
+        if column_name not in columns:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column_name} {column_def}")
+
     # 1. Operators Table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS operators (
@@ -89,6 +94,14 @@ def init_db():
             signature_hash TEXT NOT NULL
         )
     """)
+    ensure_column("incident_audit_log", "first_responder_id", "TEXT")
+    ensure_column("incident_audit_log", "officer_rank", "TEXT")
+    ensure_column("incident_audit_log", "signature_hash", "TEXT")
+    ensure_column("incident_audit_log", "officer_badge", "TEXT")
+    ensure_column("incident_audit_log", "officer_role", "TEXT")
+
+    if "first_responder_id" not in [row[1] for row in cursor.execute("PRAGMA table_info(incident_audit_log)").fetchall()]:
+        cursor.execute("ALTER TABLE incident_audit_log ADD COLUMN first_responder_id TEXT")
 
     # 4. Known Suspects / Watchlist & Personnel Table
     cursor.execute("""

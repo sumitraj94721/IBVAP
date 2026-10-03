@@ -16,9 +16,12 @@ from backend.auth_service import (
     SESSION_COOKIE_NAME,
     SECURE_SESSION_COOKIE,
     DEMO_BYPASS_AUTH,
-    get_demo_officer
+    get_demo_officer,
+    normalize_clearance_level,
+    format_clearance_label,
 )
 from backend.audit_service import audit_event, get_audit_logs
+from backend.database import get_db_connection
 
 auth_router = APIRouter(tags=["Authentication & Security"])
 
@@ -101,12 +104,14 @@ async def require_level_4_commander(
     Strict authorization gate: Only Level 4 High Command personnel allowed.
     Level 2 Field Controllers receive HTTP 403 Forbidden.
     """
-    clearance = officer.get("clearance_level", 0)
+    clearance = normalize_clearance_level(officer.get("clearance_level", 0))
     if clearance < 4:
         raise HTTPException(
             status_code=403,
             detail="Forbidden: Level 4 High Command Clearance Required. Insufficient privilege level."
         )
+    officer["clearance_level"] = clearance
+    officer["clearance_label"] = format_clearance_label(clearance)
     return officer
 
 
@@ -202,6 +207,63 @@ async def get_current_officer_profile(
         "status": "ACTIVE_SESSION",
         "officer": officer
     }
+
+
+@auth_router.get("/auth/duty-roster")
+@auth_router.get("/api/auth/duty-roster")
+@auth_router.get("/api/duty-roster")
+async def get_duty_roster():
+    """Returns the live roster derived from the seeded operator records."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT full_name, user_id, rank, clearance_level, assigned_sector
+        FROM operators
+        ORDER BY id ASC
+        """
+    )
+    rows = cursor.fetchall()
+    conn.close()
+
+    roster = []
+    for row in rows:
+        level_value = normalize_clearance_level(row["clearance_level"])
+        roster.append({
+            "name": row["full_name"],
+            "badge_id": row["user_id"],
+            "role": "ADMIN" if level_value >= 4 else "OPERATOR",
+            "clearance_level": level_value,
+            "clearance_label": format_clearance_label(level_value),
+            "sector": row["assigned_sector"],
+            "status": "ON DUTY",
+            "post_name": row["assigned_sector"],
+        })
+
+    return {"status": "SUCCESS", "duty_roster": roster}
+
+
+@auth_router.get("/alerts/incidents")
+@auth_router.get("/api/alerts/incidents")
+async def get_incident_audit_logs():
+    """Returns the incident escalation log from the operators database."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, incident_id, threat_source, threat_details,
+               COALESCE(first_responder_id, officer_badge) AS first_responder_id,
+               officer_name, COALESCE(officer_rank, officer_role) AS officer_rank,
+               qrt_unit, defensive_actions, timestamp, signature_hash
+        FROM incident_audit_log
+        ORDER BY id DESC
+        LIMIT 20
+        """
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    incidents = [dict(row) for row in rows]
+    return {"status": "SUCCESS", "incidents": incidents}
 
 
 # -------------------------------------------------------------
@@ -348,6 +410,34 @@ async def dispatch_qrt(
         request=request
     )
 
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO incident_audit_log (
+            incident_id, threat_source, threat_details, officer_name, officer_badge,
+            officer_role, qrt_unit, defensive_actions, timestamp, signature_hash,
+            first_responder_id, officer_rank
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            req.incident_id,
+            req.threat_source,
+            req.threat_details,
+            officer["full_name"],
+            officer.get("badge_id", officer.get("badge", officer["user_id"])),
+            officer.get("role", "OPERATOR"),
+            req.qrt_unit,
+            actions_str,
+            ts_str,
+            f"SIG-{officer['user_id']}-{int(time.time()) % 100000}",
+            officer["user_id"],
+            officer["rank"],
+        ),
+    )
+    conn.commit()
+    conn.close()
+
     return {
         "status": "ESCALATED",
         "incident_id": req.incident_id,
@@ -357,7 +447,7 @@ async def dispatch_qrt(
             "user_id": officer["user_id"],
             "name": officer["full_name"],
             "rank": officer["rank"],
-            "clearance_level": officer["clearance_level"]
+            "clearance_level": normalize_clearance_level(officer.get("clearance_level", 0)),
         },
         "defensive_actions": actions,
         "timestamp": ts_str,
